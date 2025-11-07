@@ -19,6 +19,11 @@ for (const [k, v] of Object.entries(process.env)) {
 
 const proxy = httpProxy.createProxyServer({});
 const lastHit = new Map(); // container -> timestamp
+const ALL_CONTAINERS = new Set(
+  Object.values(MAP)
+    .map((entry) => entry?.container)
+    .filter(Boolean),
+);
 
 function now() { return Math.floor(Date.now()/1000); }
 function sh(cmd, args=[]) {
@@ -32,6 +37,10 @@ function sh(cmd, args=[]) {
 async function isRunning(name){
   const out = await sh("docker", ["ps","--format","{{.Names}}"]);
   return out.split("\n").some(n=>n===name);
+}
+async function listRunningContainers(){
+  const out = await sh("docker", ["ps","--format","{{.Names}}"]);
+  return out ? out.split("\n").filter(Boolean) : [];
 }
 async function startContainer(name){
   await sh("docker", ["start", name]);
@@ -69,6 +78,45 @@ function pickTarget(urlPath){
   return { seg, target: MAP[seg] }; // include the matched prefix
 }
 
+class Mutex {
+  constructor() { this.locked = false; this.waiters = []; }
+  async runExclusive(fn) {
+    await this._acquire();
+    try { return await fn(); }
+    finally { this._release(); }
+  }
+  _acquire() {
+    if (!this.locked) {
+      this.locked = true;
+      return Promise.resolve();
+    }
+    return new Promise(resolve => this.waiters.push(resolve)).then(()=>this._acquire());
+  }
+  _release() {
+    this.locked = false;
+    const next = this.waiters.shift();
+    if (next) next();
+  }
+}
+
+const startMutex = new Mutex();
+
+async function ensureExclusive(container, port) {
+  await startMutex.runExclusive(async () => {
+    const running = await listRunningContainers();
+    for (const name of running) {
+      if (name !== container && ALL_CONTAINERS.has(name)) {
+        await stopContainer(name);
+        lastHit.delete(name);
+      }
+    }
+    if (!running.includes(container)) {
+      await startContainer(container);
+      await waitHealthy(container, port);
+    }
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const picked = pickTarget(req.url);
@@ -78,11 +126,8 @@ const server = http.createServer(async (req, res) => {
     const { seg, target } = picked;
     const { container, port } = target;
 
-    // ensure running
-    if (!(await isRunning(container))) {
-      await startContainer(container);
-      await waitHealthy(container, port);
-    }
+    // ensure only this backend is running
+    await ensureExclusive(container, port);
 
     // strip the first path segment (/chat, /coder, /qwen7b)
     const original = req.url;
@@ -109,4 +154,3 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, ()=>console.log(`launcher on :${PORT} → /coder|/chat|/qwen7b`));
-
