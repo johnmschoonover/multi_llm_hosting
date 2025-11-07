@@ -5,17 +5,18 @@
 - `launcher/` contains the Node.js lazy-launcher (Dockerfile, `package.json`, `server.js`); any proxy logic lives here.
 - `README.md` documents host-level setup, while `TODOs.txt` tracks pending infra improvements; update both when behavior changes.
 - Secrets belong in `.env` (ignored). Do not add sensitive data to tracked files.
+- Whenever env vars are added/removed/repurposed in compose or code, update `.env.example` in the same change so newcomers know which keys to set (e.g., `HF_TOKEN`).
 
 ## Build, Test, and Development Commands
 - `docker compose --profile launcher up -d launcher` boots only the proxy for quick iterations.
-- `docker compose --profile launcher --profile coder3b up -d` (or `chat`, `qwen7b`) launches the proxy plus a specific model.
+- `docker compose --profile launcher --profile coder up -d` (or `chat`, `general`, `coderslow`, `agent`) launches the proxy plus a specific model intent.
 - `docker compose logs -f launcher` tails proxy logs; essential for diagnosing lazy-start events.
 - `docker compose stop <service>` frees GPU VRAM when switching workloads.
 - `cd launcher && npm test` runs the lightweight unit tests for route parsing/mutex logic.
 
 ## Coding Style & Naming Conventions
 - Node code in `launcher/` uses ES modules, 2-space indentation, and concise helper functions. Follow existing patterns for env parsing (e.g., `MAP__route__field`).
-- Shell/compose examples assume lowercase service names that match container names (`coder3b`, `sitechat`, `qwen7b-bnb4`, `launcher`).
+- Shell/compose examples assume lowercase service names that match container names (`coder-fast`, `chat-general`, `general-reasoner`, `coder-slow`, `agent-tools`, `launcher`).
 - When adding scripts, prefer `.sh` with `set -euo pipefail` and minimal dependencies.
 
 ## Testing Guidelines

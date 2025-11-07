@@ -1,13 +1,13 @@
 # vLLM Launcher + Multi-Model Stack TODO
 
 ## Infra & Compose
-- [ ] **Pin container names** in `docker-compose.yml` (`container_name: coder3b|sitechat|qwen7b-bnb4|launcher`) so the launcher always finds them.
+- [ ] **Pin container names** in `docker-compose.yml` (`container_name: coder-fast|chat-general|general-reasoner|coder-slow|agent-tools|launcher`) so the launcher always finds them.
 - [ ] **.env**: add `VLLM_API_KEY=<hex>`, `COMPOSE_PROJECT_NAME=llm`.
-- [ ] **Profiles**: ensure `coder3b`, `chat`, `qwen7b`, `launcher` profiles exist and run cleanly.
+- [ ] **Profiles**: ensure `coder`, `chat`, `general`, `coderslow`, `agent`, `launcher` profiles exist and run cleanly.
 - [ ] **WSL ext4 space** verified on D: (done). Ensure weights+cache use `/srv/llm/.cache` (ext4).
 
 ## Launcher (lazy start/stop proxy)
-- [ ] **Path rewrite** confirmed (`/chat|/coder|/qwen7b` → strip prefix → backend `/v1/...`).
+- [ ] **Path rewrite** confirmed (`/chat|/coder|/general|/coderslow|/agent` → strip prefix → backend `/v1/...`).
 - [ ] **Increase start timeout**: `START_TIMEOUT_SECONDS=300`.
 - [ ] **Idle shutdown**: `IDLE_SECONDS=1800` (or your taste).
 - [ ] **Streaming keep-alive**: refresh `lastHit` on `proxyRes 'data'` (mid-stream timer bump).
@@ -19,13 +19,18 @@
 
 ## Models & VRAM policy
 - [ ] **GPU headroom**: set `--gpu-memory-utilization 0.90` (one-at-a-time policy).
-- [ ] **coder3b** flags: `--max-model-len 8192`, `--max-num-seqs 8`.
-- [ ] **sitechat** flags: `--gpu-memory-utilization ~0.18`, `--max-model-len 8192`, `--max-num-seqs 4`.
-- [ ] **qwen7b-bnb4** flags: `--quantization bitsandbytes`, `--max-model-len 4096`, `--max-num-seqs 6`.
-- [ ] **Pre-seed HF caches** on ext4 (one-time):
+- [ ] **coder-fast** flags: `Qwen/Qwen2.5-Coder-7B-Instruct`, `--quantization bitsandbytes`, `--max-model-len 4096`, `--max-num-seqs 4`.
+- [ ] **chat-general** flags: `meta-llama/Meta-Llama-3.1-8B-Instruct`, `--quantization bitsandbytes`, `--max-model-len 8192`, `--max-num-seqs 4`.
+- [ ] **general-reasoner** flags: `deepseek-ai/DeepSeek-R1-Distill-Qwen-7B`, `--quantization bitsandbytes`, `--max-model-len 4096`, `--max-num-seqs 3`.
+- [ ] **coder-slow** flags: `TechxGenus/DeepSeek-Coder-V2-Lite-Instruct-AWQ`, `--quantization awq`, `--max-model-len 4096`, `--max-num-seqs 2`.
+- [ ] **agent-tools** flags: `Qwen/Qwen2.5-7B-Instruct`, `--quantization bitsandbytes`, `--max-model-len 4096`, `--max-num-seqs 3`.
+- [ ] **Pre-seed HF caches** on ext4 (one-time, add `--token "$HF_TOKEN"` for gated repos):
   ```bash
-  huggingface-cli download microsoft/Phi-3.5-mini-instruct --local-dir /srv/llm/.cache/models--microsoft--Phi-3.5-mini-instruct --local-dir-use-symlinks False --include "*"
-  huggingface-cli download Qwen/Qwen2.5-Coder-3B-Instruct --local-dir /srv/llm/.cache/models--Qwen--Qwen2.5-Coder-3B-Instruct --local-dir-use-symlinks False --include "*"
+  huggingface-cli download Qwen/Qwen2.5-Coder-7B-Instruct --local-dir /srv/llm/.cache/models--Qwen--Qwen2.5-Coder-7B-Instruct --local-dir-use-symlinks False --include "*"
+  huggingface-cli download meta-llama/Meta-Llama-3.1-8B-Instruct --local-dir /srv/llm/.cache/models--meta-llama--Meta-Llama-3.1-8B-Instruct --local-dir-use-symlinks False --include "*" --token "$HF_TOKEN"
+  huggingface-cli download deepseek-ai/DeepSeek-R1-Distill-Qwen-7B --local-dir /srv/llm/.cache/models--deepseek-ai--DeepSeek-R1-Distill-Qwen-7B --local-dir-use-symlinks False --include "*"
+  huggingface-cli download TechxGenus/DeepSeek-Coder-V2-Lite-Instruct-AWQ --local-dir /srv/llm/.cache/models--TechxGenus--DeepSeek-Coder-V2-Lite-Instruct-AWQ --local-dir-use-symlinks False --include "*"
+  huggingface-cli download Qwen/Qwen2.5-7B-Instruct --local-dir /srv/llm/.cache/models--Qwen--Qwen2.5-7B-Instruct --local-dir-use-symlinks False --include "*"
   ```
 
 ## Security & Exposure
@@ -40,21 +45,32 @@
   #!/usr/bin/env bash
   set -e
   case "$1" in
-    coder)  docker compose stop sitechat qwen7b-bnb4
-            docker compose --profile launcher --profile coder3b up -d ;;
-    chat)   docker compose stop coder3b qwen7b-bnb4
+    coder)
+            docker compose stop chat-general general-reasoner coder-slow agent-tools
+            docker compose --profile launcher --profile coder up -d ;;
+    chat)
+            docker compose stop coder-fast general-reasoner coder-slow agent-tools
             docker compose --profile launcher --profile chat up -d ;;
-    q7b)    docker compose stop coder3b sitechat
-            docker compose --profile launcher --profile qwen7b up -d ;;
-    *) echo "usage: $0 {coder|chat|q7b}"; exit 1;;
+    general)
+            docker compose stop coder-fast chat-general coder-slow agent-tools
+            docker compose --profile launcher --profile general up -d ;;
+    coderslow)
+            docker compose stop coder-fast chat-general general-reasoner agent-tools
+            docker compose --profile launcher --profile coderslow up -d ;;
+    agent)
+            docker compose stop coder-fast chat-general general-reasoner coder-slow
+            docker compose --profile launcher --profile agent up -d ;;
+    *) echo "usage: $0 {coder|chat|general|coderslow|agent}"; exit 1;;
   esac
   ```
 - [ ] **Makefile** (nice to have):
   ```make
-  up-coder: ; docker compose --profile launcher --profile coder3b up -d && docker compose stop sitechat qwen7b-bnb4
-  up-chat:  ; docker compose --profile launcher --profile chat    up -d && docker compose stop coder3b qwen7b-bnb4
-  up-q7b:   ; docker compose --profile launcher --profile qwen7b  up -d && docker compose stop coder3b sitechat
-  logs:     ; docker compose logs -f launcher
+  up-coder:     ; docker compose --profile launcher --profile coder     up -d && docker compose stop chat-general general-reasoner coder-slow agent-tools
+  up-chat:      ; docker compose --profile launcher --profile chat      up -d && docker compose stop coder-fast general-reasoner coder-slow agent-tools
+  up-general:   ; docker compose --profile launcher --profile general   up -d && docker compose stop coder-fast chat-general coder-slow agent-tools
+  up-coderslow: ; docker compose --profile launcher --profile coderslow up -d && docker compose stop coder-fast chat-general general-reasoner agent-tools
+  up-agent:     ; docker compose --profile launcher --profile agent     up -d && docker compose stop coder-fast chat-general general-reasoner coder-slow
+  logs:         ; docker compose logs -f launcher
   ```
 
 ## Monitoring & Logs
@@ -69,11 +85,11 @@
 
 ## Website chat readiness
 - [ ] **Site chat default**: set `/v1/*` to map to `/chat/v1/*` (so future widgets can just use one base).
-- [ ] **System prompt** for website safety baked into `sitechat` requests (either at the launcher or upstream when you add your proxy later).
+- [ ] **System prompt** for website safety baked into `chat-general` requests (either at the launcher or upstream when you add your proxy later).
 - [ ] **CORS allowlist** (later, when you add a front-end): `theschoonover.net` and `www` subdomain.
 
 ## Lifecycle management
-- [ ] **Systemd wrapper**: add a unit that starts the launcher and desired model profile, and on stop runs `docker compose stop coder3b sitechat qwen7b-bnb4` so all LLMs shut down with the launcher.
+- [ ] **Systemd wrapper**: add a unit that starts the launcher and desired model profile, and on stop runs `docker compose stop coder-fast chat-general general-reasoner coder-slow agent-tools` so all LLMs shut down with the launcher.
 
 ## Hardening (later but easy wins)
 - [ ] **Nginx or Caddy front** (TLS on LAN or for public).  
@@ -109,5 +125,5 @@ docker logs -f launcher
 docker ps --format '{{.Names}}	{{.Status}}'
 
 # Stop everything but launcher
-docker compose stop coder3b sitechat qwen7b-bnb4
+docker compose stop coder-fast chat-general general-reasoner coder-slow agent-tools
 ```

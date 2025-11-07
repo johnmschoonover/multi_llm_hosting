@@ -1,8 +1,8 @@
 # multi_llm_hosting
 
 Self-hosted playground for multiple vLLM backends behind a single lazy-launching proxy.  
-`docker-compose.yml` defines three models (`coder3b`, `sitechat`, `qwen7b-bnb4`) and a `launcher`
-container that routes `/coder`, `/chat`, and `/qwen7b` traffic to the right backend, starting/stopping
+`docker-compose.yml` defines five intent-based models (`coder-fast`, `chat-general`, `general-reasoner`, `coder-slow`, `agent-tools`) and a `launcher`
+container that routes `/coder`, `/chat`, `/general`, `/coderslow`, and `/agent` traffic to the right backend, starting/stopping
 containers on demand to conserve GPU memory.
 
 ## Overview
@@ -29,8 +29,14 @@ This README describes how to run the vLLM multi-service stack inside WSL2 on a W
 1. Copy `.env.example` (or create `.env`) and define:
    ```env
    VLLM_API_KEY=<your hex token>
+   HF_TOKEN=<huggingface token if you use gated models>
    ```
    `.env` is already ignored; keep your API key here and rotate it periodically.
+   `HF_TOKEN` is optional but required for gated checkpoints such as Meta Llama 3.1; reuse it for both
+   `HF_TOKEN` and `HUGGING_FACE_HUB_TOKEN` via the shared env block in `docker-compose.yml`.
+   Create the token from https://huggingface.co/settings/tokens (scope: **Read**) and accept the
+   specific model licenses (e.g., Meta Llama 3.1) under each repo’s “Access” tab. Paste the token into
+   `.env` or run `huggingface-cli login --token $HF_TOKEN` before `docker compose up`.
    Quick way to mint a 32-byte hex token (uses OpenSSL, available on most systems):
    ```bash
    openssl rand -hex 32
@@ -52,14 +58,20 @@ docker compose --profile launcher up -d launcher
 Start a specific model profile (launcher + backend):
 
 ```bash
-# Fast coding model
-docker compose --profile launcher --profile coder3b up -d
+# Fast coding model (Qwen2.5 Coder 7B, 8-bit)
+docker compose --profile launcher --profile coder up -d
 
-# Website-friendly Phi-3.5 chat model
+# General chat assistant (Llama 3.1 8B, 8-bit)
 docker compose --profile launcher --profile chat up -d
 
-# Quantized Qwen 7B
-docker compose --profile launcher --profile qwen7b up -d
+# Reasoning-forward 7B (DeepSeek R1 Distill)
+docker compose --profile launcher --profile general up -d
+
+# High-accuracy coding (DeepSeek Coder V2 Lite, 16B AWQ)
+docker compose --profile launcher --profile coderslow up -d
+
+# Tool-capable agent (Qwen2.5 7B Instruct w/ tool calling, 8-bit)
+docker compose --profile launcher --profile agent up -d
 ```
 
 The launcher listens on `:8000` and expects requests like:
@@ -70,7 +82,9 @@ curl -s http://localhost:8000/coder/v1/models \
 ```
 
 Idle services shut down after `IDLE_SECONDS` (default 600). Tune `IDLE_SECONDS` and
-`START_TIMEOUT_SECONDS` in the compose file via environment overrides.
+`START_TIMEOUT_SECONDS` in the compose file via environment overrides. Each route name matches its
+purpose (`/coder`, `/chat`, `/general`, `/coderslow`, `/agent`) rather than specific model families so you can
+swap checkpoints without reworking client integrations.
 
 ## Operational tips
 
@@ -81,9 +95,21 @@ Idle services shut down after `IDLE_SECONDS` (default 600). Tune `IDLE_SECONDS` 
 - Use `docker compose stop <service>` to free GPU memory quickly when switching workloads.
 - For profile automation, see the scripts in `TODOs.txt` (switch script / Makefile ideas).
 
+## Cold-start timings (RTX 4080, WSL2, Nov 2025)
+
+| Route / profile | Model (quantization) | Cold start (s) | Notes |
+| --------------- | -------------------- | -------------- | ----- |
+| `/coder` (`coder-fast`) | Qwen/Qwen2.5-Coder-7B-Instruct (bitsandbytes) | ~38s | Includes cache download check; expect faster when already staged |
+| `/chat` (`chat-general`) | meta-llama/Meta-Llama-3.1-8B-Instruct (bitsandbytes) | ~38s | Requires valid `HF_TOKEN` + accepted license |
+| `/general` (`general-reasoner`) | deepseek-ai/DeepSeek-R1-Distill-Qwen-7B (bitsandbytes) | ~33s | Lightest footprint of the set |
+| `/coderslow` (`coder-slow`) | TechxGenus/DeepSeek-Coder-V2-Lite-Instruct-AWQ (awq) | ~37s | 16B AWQ export; still fits in 16 GB with low concurrency |
+| `/agent` (`agent-tools`) | Qwen/Qwen2.5-7B-Instruct (bitsandbytes) | ~33s | Use this route when Continue Agent mode needs function/tool calling |
+
+Times were recorded with `docker compose up -d <service>` followed by a curl loop against `/v1/models`. Subsequent launches on a warm filesystem are usually 5‑10s faster as long as caches stay in `/srv/llm/.cache`.
+
 ## Basic security checklist
 
-- Only expose the launcher (`:8000`) publicly; keep model ports (`8001-8003`) on the LAN.
+- Only expose the launcher (`:8000`) publicly; keep model ports (`8001-8005`) on the LAN.
 - Keep `.env` out of Git (already enforced) and rotate `VLLM_API_KEY` quarterly.
 - Optional: front with Cloudflare Tunnel or Nginx/Caddy for TLS + auth.
 
@@ -125,6 +151,7 @@ Run these after bringing the stack up:
 ```bash
 # From Windows-side WSL shell
 curl http://127.0.0.1:8000/chat/v1/models -H "Authorization: Bearer $VLLM_API_KEY"
+curl http://127.0.0.1:8000/agent/v1/models -H "Authorization: Bearer $VLLM_API_KEY"
 
 # From macOS client on same LAN
 curl http://<windows-ip>:8000/chat/v1/models -H "Authorization: Bearer $VLLM_API_KEY"
@@ -140,4 +167,4 @@ If the first succeeds but the second fails, revisit the Windows Firewall rule (P
 | Launcher logs `Error: spawn docker ENOENT` | Docker CLI not available inside container | Confirm Docker Desktop WSL integration is enabled and restart Docker Desktop before `docker compose up`. |
 | `launch error: Backend not healthy in time` | Model still loading or GPU exhausted | Increase `START_TIMEOUT_SECONDS`, ensure VRAM is free, and pre-seed caches on SSD. |
 | `502` responses intermittently | Containers stopping mid-request or idle timeout too low | Raise `IDLE_SECONDS` and monitor launcher logs for stop/start churn. |
-| `CUDA out of memory` in vLLM | Multiple models active or quantization missing | Use compose profiles to run one heavy model at a time and double-check quantized configs (`bitsandbytes` for qwen7b). |
+| `CUDA out of memory` in vLLM | Multiple models active or quantization missing | Use compose profiles to run one heavy model at a time and double-check quantized configs (`bitsandbytes`/`awq` for the configured models). |

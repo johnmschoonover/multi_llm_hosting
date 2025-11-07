@@ -1,0 +1,42 @@
+{
+  "$schema": "https://raw.githubusercontent.com/continuedev/continue/main/config.schema.json",
+  "models": [
+    {
+      "title": "Coder Fast (Qwen2.5 7B 8-bit)",
+      "provider": "openai",
+      "model": "coder-fast",
+      "apiBase": "http://127.0.0.1:8000/coder/v1",
+      "apiKey": "${env:VLLM_API_KEY}"
+    },
+    {
+      "title": "Chat General (Llama 3.1 8B 8-bit)",
+      "provider": "openai",
+      "model": "chat-general",
+      "apiBase": "http://127.0.0.1:8000/chat/v1",
+      "apiKey": "${env:VLLM_API_KEY}"
+    },
+    {
+      "title": "General Reasoner (DeepSeek R1 7B)",
+      "provider": "openai",
+      "model": "general-reasoner",
+      "apiBase": "http://127.0.0.1:8000/general/v1",
+      "apiKey": "${env:VLLM_API_KEY}"
+    },
+    {
+      "title": "Coder Slow (DeepSeek Coder V2 Lite 16B AWQ)",
+      "provider": "openai",
+      "model": "coder-slow",
+      "apiBase": "http://127.0.0.1:8000/coderslow/v1",
+      "apiKey": "${env:VLLM_API_KEY}"
+    },
+    {
+      "title": "Agent Tools (Qwen2.5 7B Instruct 8-bit)",
+      "provider": "openai",
+      "model": "agent-tools",
+      "apiBase": "http://127.0.0.1:8000/agent/v1",
+      "apiKey": "${env:VLLM_API_KEY}"
+    }
+  ],
+  "defaultModel": "coder-fast",
+  "tabAutocompleteModel": "coder-fast"
+}
