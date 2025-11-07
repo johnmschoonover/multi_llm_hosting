@@ -14,10 +14,13 @@ test("buildRouteMap collects prefixed env vars", () => {
     MAP__chat__container: "sitechat",
     MAP__chat__port: "8002",
     MAP__coder__container: "coder3b",
+    MAP__vision__health: "/healthz",
+    MAP__vision__auth: "passthrough",
   };
   const map = buildRouteMap(env);
   assert.deepEqual(map.chat, { container: "sitechat", port: "8002" });
   assert.deepEqual(map.coder, { container: "coder3b" });
+  assert.deepEqual(map.vision, { health: "/healthz", auth: "passthrough" });
 });
 
 test("pickTarget returns matching route metadata", () => {
@@ -58,7 +61,7 @@ test("ensureExclusive stops other containers before serving target", async () =>
     logger: noopLogger,
   });
 
-  await ensureExclusive("sitechat", 8002);
+  await ensureExclusive({ container: "sitechat", port: 8002, health: "/status" });
   assert.deepEqual(calls, ["stop:coder3b"]);
 });
 
@@ -68,14 +71,14 @@ test("ensureExclusive starts target when not already running", async () => {
     listRunningContainers: async () => ["coder3b"],
     stopContainer: async (name) => calls.push(`stop:${name}`),
     startContainer: async (name) => calls.push(`start:${name}`),
-    waitHealthy: async () => calls.push("wait"),
+    waitHealthy: async (target) => calls.push(`wait:${target.health ?? "/v1/models"}`),
     trackedContainers: new Set(["coder3b", "sitechat"]),
     lastHitMap: new Map([["coder3b", Date.now()]]),
     logger: noopLogger,
   });
 
-  await ensureExclusive("sitechat", 8002);
-  assert.deepEqual(calls, ["stop:coder3b", "start:sitechat", "wait"]);
+  await ensureExclusive({ container: "sitechat", port: 8002 });
+  assert.deepEqual(calls, ["stop:coder3b", "start:sitechat", "wait:/v1/models"]);
 });
 
 test("ensureExclusive skips start when target already running alone", async () => {
@@ -90,6 +93,6 @@ test("ensureExclusive skips start when target already running alone", async () =
     logger: noopLogger,
   });
 
-  await ensureExclusive("sitechat", 8002);
+  await ensureExclusive({ container: "sitechat", port: 8002 });
   assert.deepEqual(calls, []);
 });
