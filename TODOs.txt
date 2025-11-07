@@ -15,6 +15,7 @@
 - [ ] **Engine API** (optional): replace shelling out to `docker` CLI with HTTP calls to `/var/run/docker.sock`.
 - [ ] **Per-route defaults**: env vars to set model name, `max_tokens`, temp, etc., for each prefix.
 - [ ] **Basic auth** (optional): add header check for `X-API-Secret` or HTTP Basic before proxying.
+- [ ] **Bearer enforcement**: require inbound `Authorization: Bearer $VLLM_API_KEY` in `launcher/server.js` (with opt-out env if absolutely needed) instead of auto-injecting the header when clients omit it.
 
 ## Models & VRAM policy
 - [ ] **GPU headroom**: set `--gpu-memory-utilization 0.90` (one-at-a-time policy).
