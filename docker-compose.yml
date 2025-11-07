@@ -107,6 +107,25 @@ services:
     ports: ["8005:8005"]
     profiles: ["agent"]
 
+  # --- Vision diffusion server (Stable Diffusion v1.5, FastAPI wrapper) ---
+  vision-diffusion:
+    container_name: vision-diffusion
+    build: ./vision-server
+    image: vision-diffusion:latest
+    runtime: nvidia
+    deploy:
+      restart_policy: { condition: on-failure }
+    environment:
+      MODEL_ID: "${VISION_MODEL_ID:-runwayml/stable-diffusion-v1-5}"
+      MODEL_REVISION: "${VISION_MODEL_REVISION:-}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+      ENABLE_SAFETY_CHECKER: "${VISION_ENABLE_SAFETY_CHECKER:-0}"
+      MAX_EDGE: "${VISION_MAX_EDGE:-1024}"
+    volumes:
+      - /srv/llm/vision-cache:/models
+    ports: ["8188:8188"]
+    profiles: ["vision"]
+
   # --- Single front door on :8000 with path routing ---
   launcher:
     build: ./launcher
@@ -123,6 +142,10 @@ services:
       MAP__coderslow__port: "8004"
       MAP__agent__container: "agent-tools"
       MAP__agent__port: "8005"
+      MAP__vision__container: "vision-diffusion"
+      MAP__vision__port: "8188"
+      MAP__vision__health: "/healthz"
+      MAP__vision__auth: "passthrough"
       IDLE_SECONDS: "600"
       START_TIMEOUT_SECONDS: "120"
       VLLM_API_KEY: "${VLLM_API_KEY}"

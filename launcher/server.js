@@ -19,7 +19,7 @@ const logger = {
 export function buildRouteMap(env = process.env) {
   const map = {};
   for (const [k, v] of Object.entries(env)) {
-    const m = k.match(/^MAP__([^_]+)__(container|port)$/);
+    const m = k.match(/^MAP__([^_]+)__(container|port|health|auth)$/);
     if (!m) continue;
     const key = m[1];
     const field = m[2];
@@ -58,12 +58,22 @@ async function startContainer(name){
 async function stopContainer(name){
   await sh("docker", ["stop", name]);
 }
-async function waitHealthy(host, port){
+function normalizeHealthPath(path) {
+  if (!path) return "/v1/models";
+  return path.startsWith("/") ? path : `/${path}`;
+}
+
+async function waitHealthy(target){
+  const { container: host, port, health, auth } = target;
+  const path = normalizeHealthPath(health);
   const deadline = Date.now() + START_TIMEOUT*1000;
   while (Date.now() < deadline) {
     try {
-      const ok = await fetch(`http://${host}:${port}/v1/models`, {
-        headers: VLLM_API_KEY ? { "Authorization": `Bearer ${VLLM_API_KEY}` } : {}
+      const headers = (VLLM_API_KEY && auth !== "passthrough")
+        ? { "Authorization": `Bearer ${VLLM_API_KEY}` }
+        : {};
+      const ok = await fetch(`http://${host}:${port}${path}`, {
+        headers,
       });
       if (ok.ok) {
         logger.info(`Backend ${host}:${port} healthy`);
@@ -130,7 +140,8 @@ export function createEnsureExclusive({
   logger: loggerRef = logger,
 }) {
   const startMutex = new Mutex(loggerRef);
-  return async function ensureExclusive(container, port) {
+  return async function ensureExclusive(target) {
+    const { container, port, health } = target;
     await startMutex.runExclusive(async () => {
       loggerRef.info(`Ensuring exclusive access for ${container}`);
       const running = await listFn();
@@ -144,7 +155,7 @@ export function createEnsureExclusive({
       if (!running.includes(container)) {
         loggerRef.info(`Starting ${container} on port ${port}`);
         await startFn(container);
-        await waitFn(container, port);
+        await waitFn(target);
         loggerRef.info(`${container} ready on ${port}`);
       } else {
         loggerRef.info(`${container} already running; skipping start`);
@@ -191,14 +202,15 @@ function createServer() {
       const { container, port } = target;
       logger.info(`Proxying ${req.method} ${req.url} via ${seg} (${container})`);
 
-      await ensureExclusive(container, port);
+      await ensureExclusive(target);
 
       const rewritten = rewritePath(req.url, seg);
       req.url = rewritten;
       lastHit.set(container, now());
 
       const headers = { ...req.headers };
-      if (VLLM_API_KEY && !headers.authorization) {
+      const shouldInjectAuth = target?.auth !== "passthrough";
+      if (shouldInjectAuth && VLLM_API_KEY && !headers.authorization) {
         headers.authorization = `Bearer ${VLLM_API_KEY}`;
       }
 
@@ -223,7 +235,9 @@ export function startServer() {
   server.once("close", () => {
     if (timer) clearInterval(timer);
   });
-  server.listen(PORT, ()=>logger.info(`launcher on :${PORT} → /coder|/chat|/qwen7b`));
+  const routes = Object.keys(ROUTE_MAP).sort();
+  const prettyRoutes = routes.map((r) => `/${r}`).join(" ");
+  server.listen(PORT, ()=>logger.info(`launcher on :${PORT} → ${prettyRoutes || "(no routes)"}`));
   return server;
 }
 

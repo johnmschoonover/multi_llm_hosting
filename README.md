@@ -1,8 +1,8 @@
 # multi_llm_hosting
 
-Self-hosted playground for multiple vLLM backends behind a single lazy-launching proxy.  
-`docker-compose.yml` defines five intent-based models (`coder-fast`, `chat-general`, `general-reasoner`, `coder-slow`, `agent-tools`) and a `launcher`
-container that routes `/coder`, `/chat`, `/general`, `/coderslow`, and `/agent` traffic to the right backend, starting/stopping
+Self-hosted playground for multiple vLLM backends plus a GPU diffusion server behind a single lazy-launching proxy.
+`docker-compose.yml` defines five intent-based language models (`coder-fast`, `chat-general`, `general-reasoner`, `coder-slow`, `agent-tools`), a Stable Diffusion profile (`vision-diffusion`), and a `launcher`
+container that routes `/coder`, `/chat`, `/general`, `/coderslow`, `/agent`, and `/vision` traffic to the right backend, starting/stopping
 containers on demand to conserve GPU memory.
 
 ## Overview
@@ -15,6 +15,7 @@ This README describes how to run the vLLM multi-service stack inside WSL2 on a W
 | ---- | ----------- |
 | `docker-compose.yml` | All service definitions, profiles, and shared env blocks. |
 | `launcher/` | Tiny Node.js proxy that autostarts containers and trims idle ones. |
+| `vision-server/` | FastAPI wrapper around a Stable Diffusion pipeline for the `/vision` route. |
 | `.env` | Local-only secrets (`VLLM_API_KEY`, `COMPOSE_PROJECT_NAME`, etc.); ignored by Git. |
 | `TODOs.txt` | Living checklist for features, hardening, and DX niceties. |
 
@@ -22,7 +23,8 @@ This README describes how to run the vLLM multi-service stack inside WSL2 on a W
 
 - Docker + Docker Compose plugin (v2).
 - NVIDIA GPU + `nvidia-container-toolkit`.
-- Host paths `/srv/llm/.cache` (for model cache) and optional `/srv/llm/weights`.
+- Host paths `/srv/llm/.cache` (for vLLM cache) and optional `/srv/llm/weights`.
+- Host path `/srv/llm/vision-cache` for the diffusion model weights and scheduler files.
 
 ## Environment setup
 
@@ -31,7 +33,7 @@ This README describes how to run the vLLM multi-service stack inside WSL2 on a W
    VLLM_API_KEY=<your hex token>
    HF_TOKEN=<huggingface token if you use gated models>
    ```
-   `.env` is already ignored; keep your API key here and rotate it periodically.
+     `.env` is already ignored; keep your API key here and rotate it periodically.
    `HF_TOKEN` is optional but required for gated checkpoints such as Meta Llama 3.1; reuse it for both
    `HF_TOKEN` and `HUGGING_FACE_HUB_TOKEN` via the shared env block in `docker-compose.yml`.
    Create the token from https://huggingface.co/settings/tokens (scope: **Read**) and accept the
@@ -45,7 +47,11 @@ This README describes how to run the vLLM multi-service stack inside WSL2 on a W
    ```bash
    head -c32 /dev/urandom | xxd -p
    ```
-2. Ensure the cache directory exists and is writable: `sudo mkdir -p /srv/llm/.cache`.
+2. Ensure the cache directories exist and are writable:
+   ```bash
+   sudo mkdir -p /srv/llm/.cache
+   sudo mkdir -p /srv/llm/vision-cache
+   ```
 
 ## Running services
 
@@ -72,6 +78,9 @@ docker compose --profile launcher --profile coderslow up -d
 
 # Tool-capable agent (Qwen2.5 7B Instruct w/ tool calling, 8-bit)
 docker compose --profile launcher --profile agent up -d
+
+# Vision diffusion service (Stable Diffusion v1.5 FastAPI wrapper)
+docker compose --profile launcher --profile vision up -d
 ```
 
 The launcher listens on `:8000` and expects requests like:
@@ -80,6 +89,21 @@ The launcher listens on `:8000` and expects requests like:
 curl -s http://localhost:8000/coder/v1/models \
   -H "Authorization: Bearer $VLLM_API_KEY" | jq .
 ```
+
+To generate an image through the diffusion profile, send a JSON payload to `/vision/generate` (no bearer token required):
+
+```bash
+curl -s http://localhost:8000/vision/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+        "prompt": "sunset over a future city, cinematic lighting",
+        "num_inference_steps": 20,
+        "guidance_scale": 6.5,
+        "seed": 1337
+      }' | jq -r '.image_base64' | base64 -d > output.png
+```
+
+The response includes the base64-encoded PNG, elapsed time, and seed; adjust width/height with the optional fields documented in `vision-server/app.py`.
 
 Idle services shut down after `IDLE_SECONDS` (default 600). Tune `IDLE_SECONDS` and
 `START_TIMEOUT_SECONDS` in the compose file via environment overrides. Each route name matches its
@@ -104,6 +128,7 @@ swap checkpoints without reworking client integrations.
 | `/general` (`general-reasoner`) | deepseek-ai/DeepSeek-R1-Distill-Qwen-7B (bitsandbytes) | ~33s | Lightest footprint of the set |
 | `/coderslow` (`coder-slow`) | TechxGenus/DeepSeek-Coder-V2-Lite-Instruct-AWQ (awq) | ~37s | 16B AWQ export; still fits in 16 GB with low concurrency |
 | `/agent` (`agent-tools`) | Qwen/Qwen2.5-7B-Instruct (bitsandbytes) | ~33s | Use this route when Continue Agent mode needs function/tool calling |
+| `/vision` (`vision-diffusion`) | runwayml/stable-diffusion-v1-5 (fp16) | ~28s | Includes one-time weights download into `/srv/llm/vision-cache` |
 
 Times were recorded with `docker compose up -d <service>` followed by a curl loop against `/v1/models`. Subsequent launches on a warm filesystem are usually 5‑10s faster as long as caches stay in `/srv/llm/.cache`.
 
@@ -152,6 +177,7 @@ Run these after bringing the stack up:
 # From Windows-side WSL shell
 curl http://127.0.0.1:8000/chat/v1/models -H "Authorization: Bearer $VLLM_API_KEY"
 curl http://127.0.0.1:8000/agent/v1/models -H "Authorization: Bearer $VLLM_API_KEY"
+curl http://127.0.0.1:8000/vision/healthz
 
 # From macOS client on same LAN
 curl http://<windows-ip>:8000/chat/v1/models -H "Authorization: Bearer $VLLM_API_KEY"
