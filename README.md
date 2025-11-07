@@ -23,8 +23,8 @@ This README describes how to run the vLLM multi-service stack inside WSL2 on a W
 
 - Docker + Docker Compose plugin (v2).
 - NVIDIA GPU + `nvidia-container-toolkit`.
-- Host paths `/srv/llm/.cache` (for vLLM cache) and optional `/srv/llm/weights`.
-- Host path `/srv/llm/vision-cache` for the diffusion model weights and scheduler files.
+- Host path `/srv/llm/.cache` (shared across vLLM download cache and the diffusion weights).
+- Optional host path `/srv/llm/weights` if you want to serve local checkpoints instead of Hugging Face Hub IDs.
 
 ## Environment setup
 
@@ -47,10 +47,10 @@ This README describes how to run the vLLM multi-service stack inside WSL2 on a W
    ```bash
    head -c32 /dev/urandom | xxd -p
    ```
-2. Ensure the cache directories exist and are writable:
+2. Ensure the cache directories exist and are writable (the vision service reuses the same root cache directory):
    ```bash
    sudo mkdir -p /srv/llm/.cache
-   sudo mkdir -p /srv/llm/vision-cache
+   sudo mkdir -p /srv/llm/.cache/vision
    ```
 
 ## Running services
@@ -82,6 +82,11 @@ docker compose --profile launcher --profile agent up -d
 # Vision diffusion service (Stable Diffusion v1.5 FastAPI wrapper)
 docker compose --profile launcher --profile vision up -d
 ```
+
+Customize the diffusion checkpoint or runtime limits by exporting `VISION_MODEL_ID`,
+`VISION_MODEL_REVISION`, `VISION_ENABLE_SAFETY_CHECKER`, or `VISION_MAX_EDGE` before
+running `docker compose` (all default to sensible values in the container if
+unset).
 
 The launcher listens on `:8000` and expects requests like:
 
@@ -128,7 +133,7 @@ swap checkpoints without reworking client integrations.
 | `/general` (`general-reasoner`) | deepseek-ai/DeepSeek-R1-Distill-Qwen-7B (bitsandbytes) | ~33s | Lightest footprint of the set |
 | `/coderslow` (`coder-slow`) | TechxGenus/DeepSeek-Coder-V2-Lite-Instruct-AWQ (awq) | ~37s | 16B AWQ export; still fits in 16 GB with low concurrency |
 | `/agent` (`agent-tools`) | Qwen/Qwen2.5-7B-Instruct (bitsandbytes) | ~33s | Use this route when Continue Agent mode needs function/tool calling |
-| `/vision` (`vision-diffusion`) | runwayml/stable-diffusion-v1-5 (fp16) | ~28s | Includes one-time weights download into `/srv/llm/vision-cache` |
+| `/vision` (`vision-diffusion`) | runwayml/stable-diffusion-v1-5 (fp16) | ~28s | Includes one-time weights download into `/srv/llm/.cache/vision` |
 
 Times were recorded with `docker compose up -d <service>` followed by a curl loop against `/v1/models`. Subsequent launches on a warm filesystem are usually 5‑10s faster as long as caches stay in `/srv/llm/.cache`.
 

@@ -122,7 +122,7 @@ services:
       ENABLE_SAFETY_CHECKER: "${VISION_ENABLE_SAFETY_CHECKER:-0}"
       MAX_EDGE: "${VISION_MAX_EDGE:-1024}"
     volumes:
-      - /srv/llm/vision-cache:/models
+      - /srv/llm/.cache/vision:/models
     ports: ["8188:8188"]
     profiles: ["vision"]
 
