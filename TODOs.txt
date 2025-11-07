@@ -1,0 +1,110 @@
+# vLLM Launcher + Multi-Model Stack TODO
+
+## Infra & Compose
+- [ ] **Pin container names** in `docker-compose.yml` (`container_name: coder3b|sitechat|qwen7b-bnb4|launcher`) so the launcher always finds them.
+- [ ] **.env**: add `VLLM_API_KEY=<hex>`, `COMPOSE_PROJECT_NAME=llm`.
+- [ ] **Profiles**: ensure `coder3b`, `chat`, `qwen7b`, `launcher` profiles exist and run cleanly.
+- [ ] **WSL ext4 space** verified on D: (done). Ensure weights+cache use `/srv/llm/.cache` (ext4).
+
+## Launcher (lazy start/stop proxy)
+- [ ] **Path rewrite** confirmed (`/chat|/coder|/qwen7b` → strip prefix → backend `/v1/...`).
+- [ ] **Increase start timeout**: `START_TIMEOUT_SECONDS=300`.
+- [ ] **Idle shutdown**: `IDLE_SECONDS=1800` (or your taste).
+- [ ] **Streaming keep-alive**: refresh `lastHit` on `proxyRes 'data'` (mid-stream timer bump).
+- [ ] **Health endpoint**: add `GET /healthz` returning mappings + container states.
+- [ ] **Engine API** (optional): replace shelling out to `docker` CLI with HTTP calls to `/var/run/docker.sock`.
+- [ ] **Per-route defaults**: env vars to set model name, `max_tokens`, temp, etc., for each prefix.
+- [ ] **Basic auth** (optional): add header check for `X-API-Secret` or HTTP Basic before proxying.
+
+## Models & VRAM policy
+- [ ] **GPU headroom**: set `--gpu-memory-utilization 0.90` (one-at-a-time policy).
+- [ ] **coder3b** flags: `--max-model-len 8192`, `--max-num-seqs 8`.
+- [ ] **sitechat** flags: `--gpu-memory-utilization ~0.18`, `--max-model-len 8192`, `--max-num-seqs 4`.
+- [ ] **qwen7b-bnb4** flags: `--quantization bitsandbytes`, `--max-model-len 4096`, `--max-num-seqs 6`.
+- [ ] **Pre-seed HF caches** on ext4 (one-time):
+  ```bash
+  huggingface-cli download microsoft/Phi-3.5-mini-instruct --local-dir /srv/llm/.cache/models--microsoft--Phi-3.5-mini-instruct --local-dir-use-symlinks False --include "*"
+  huggingface-cli download Qwen/Qwen2.5-Coder-3B-Instruct --local-dir /srv/llm/.cache/models--Qwen--Qwen2.5-Coder-3B-Instruct --local-dir-use-symlinks False --include "*"
+  ```
+
+## Security & Exposure
+- [ ] **Keep vLLM API key static** in `.env`; rotate quarterly.
+- [ ] **Port exposure**: keep only **launcher** on `:8000` exposed; model containers internal only.
+- [ ] (Optional) **Cloudflare Tunnel** → public HTTPS URL; restrict with Cloudflare Access; pass `Authorization` through.
+- [ ] **Windows Defender exclusion** for the WSL VHD folder backing `/srv/llm`.
+
+## DX: scripts & profiles
+- [ ] **Switch script** (`/srv/llm/compose/switch.sh`):
+  ```bash
+  #!/usr/bin/env bash
+  set -e
+  case "$1" in
+    coder)  docker compose stop sitechat qwen7b-bnb4
+            docker compose --profile launcher --profile coder3b up -d ;;
+    chat)   docker compose stop coder3b qwen7b-bnb4
+            docker compose --profile launcher --profile chat up -d ;;
+    q7b)    docker compose stop coder3b sitechat
+            docker compose --profile launcher --profile qwen7b up -d ;;
+    *) echo "usage: $0 {coder|chat|q7b}"; exit 1;;
+  esac
+  ```
+- [ ] **Makefile** (nice to have):
+  ```make
+  up-coder: ; docker compose --profile launcher --profile coder3b up -d && docker compose stop sitechat qwen7b-bnb4
+  up-chat:  ; docker compose --profile launcher --profile chat    up -d && docker compose stop coder3b qwen7b-bnb4
+  up-q7b:   ; docker compose --profile launcher --profile qwen7b  up -d && docker compose stop coder3b sitechat
+  logs:     ; docker compose logs -f launcher
+  ```
+
+## Monitoring & Logs
+- [ ] **Launcher logs**: on start/stop/timeout; include measured spin-up duration.
+- [ ] **vLLM readiness**: grep for “Uvicorn running” and “Finished loading model” and surface in launcher logs.
+- [ ] (Optional) **Node exporter** or `glances` for quick GPU/CPU/NVMe telemetry; or `nvidia-smi dmon`.
+
+## Bench & SLOs
+- [ ] **Start-time benchmarks** (warm/cold) scripts you already have.
+- [ ] **Throughput probe**: simple tokens/s test (1k-token completion, temp=0.2) to track regressions.
+- [ ] **Latency SLO**: fail launcher if backend not healthy within `START_TIMEOUT_SECONDS`; return `503` with `Retry-After`.
+
+## Website chat readiness
+- [ ] **Site chat default**: set `/v1/*` to map to `/chat/v1/*` (so future widgets can just use one base).
+- [ ] **System prompt** for website safety baked into `sitechat` requests (either at the launcher or upstream when you add your proxy later).
+- [ ] **CORS allowlist** (later, when you add a front-end): `theschoonover.net` and `www` subdomain.
+
+## Hardening (later but easy wins)
+- [ ] **Nginx or Caddy front** (TLS on LAN or for public).  
+- [ ] **Rate limiting** per IP / route.  
+- [ ] **Per-route API keys** (different key for `/chat` vs `/coder` if you share beyond LAN).  
+- [ ] **Log redaction**: strip auth headers before writing access logs.
+
+## Agent hooks (so your coding agent can manage this)
+- [ ] **Launcher admin API** (tiny JSON endpoints):
+  - `GET /routes` → show route→container map and states.
+  - `POST /admin/start {route}` / `POST /admin/stop {route}`.
+  - `GET /stats` → spin-up times, request counts, lastHit timestamps.
+- [ ] **Health checks** for CI:
+  - `curl /coder/v1/models` and `/chat/v1/models` → 200 within X seconds.
+- [ ] **Compose validation**: agent task that lints compose, verifies ports free, names stable.
+- [ ] **Auto-seed** task: if cache missing, run `huggingface-cli download` before first boot.
+
+## Client configs (ready for copy)
+- [ ] **Continue (VS Code)** models configuration JSON.
+
+## Sanity commands (for the agent to use)
+```bash
+# Start launcher only (no models hot)
+docker compose up -d launcher
+
+# Prove lazy start works for chat
+curl -s http://<ip>:8000/chat/v1/models -H "Authorization: Bearer $VLLM_API_KEY" | jq .
+
+# Tail launcher during a bring-up
+docker logs -f launcher
+
+# See container states/names
+docker ps --format '{{.Names}}	{{.Status}}'
+
+# Stop everything but launcher
+docker compose stop coder3b sitechat qwen7b-bnb4
+```
+

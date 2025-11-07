@@ -1,0 +1,33 @@
+# Repository Guidelines
+
+## Project Structure & Module Organization
+- `docker-compose.yml` orchestrates all vLLM backends plus the `launcher` proxy; treat it as the single source of truth for service config.
+- `launcher/` contains the Node.js lazy-launcher (Dockerfile, `package.json`, `server.js`); any proxy logic lives here.
+- `README.md` documents host-level setup, while `TODOs.txt` tracks pending infra improvements; update both when behavior changes.
+- Secrets belong in `.env` (ignored). Do not add sensitive data to tracked files.
+
+## Build, Test, and Development Commands
+- `docker compose --profile launcher up -d launcher` boots only the proxy for quick iterations.
+- `docker compose --profile launcher --profile coder3b up -d` (or `chat`, `qwen7b`) launches the proxy plus a specific model.
+- `docker compose logs -f launcher` tails proxy logs; essential for diagnosing lazy-start events.
+- `docker compose stop <service>` frees GPU VRAM when switching workloads.
+
+## Coding Style & Naming Conventions
+- Node code in `launcher/` uses ES modules, 2-space indentation, and concise helper functions. Follow existing patterns for env parsing (e.g., `MAP__route__field`).
+- Shell/compose examples assume lowercase service names that match container names (`coder3b`, `sitechat`, `qwen7b-bnb4`, `launcher`).
+- When adding scripts, prefer `.sh` with `set -euo pipefail` and minimal dependencies.
+
+## Testing Guidelines
+- No automated test suite yet; manual verification is expected:
+  - `curl http://127.0.0.1:8000/<route>/v1/models -H "Authorization: Bearer $VLLM_API_KEY"` after changes.
+  - Watch `docker compose logs -f launcher` during cold starts to confirm healthy transitions.
+- If you introduce automated tests (e.g., Node unit tests), document the command in this file and wire it into CI.
+
+## Commit & Pull Request Guidelines
+- Use imperative, one-line commit subjects (e.g., “Add idle shutdown knob”). Group related doc/code changes together.
+- Describe testing steps in the commit or PR body (e.g., “Verified via curl from WSL and macOS client”).
+- PRs should summarize what changed, why, and any validation commands/output. Link TODO items when relevant and include screenshots only if UI artifacts are touched.
+
+## Security & Configuration Tips
+- Never commit real API keys. Run a heuristic scan before pushing (`python scripts/secret_scan.py` or `gitleaks`).
+- Keep the Windows firewall rule scoped to the Private profile and rotate `VLLM_API_KEY` quarterly.
