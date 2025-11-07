@@ -2,8 +2,10 @@
   "name": "lazy-launcher",
   "version": "1.0.0",
   "type": "module",
+  "scripts": {
+    "test": "node server.test.js"
+  },
   "dependencies": {
     "http-proxy": "^1.18.1"
   }
 }
-

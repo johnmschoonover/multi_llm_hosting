@@ -11,6 +11,7 @@
 - `docker compose --profile launcher --profile coder3b up -d` (or `chat`, `qwen7b`) launches the proxy plus a specific model.
 - `docker compose logs -f launcher` tails proxy logs; essential for diagnosing lazy-start events.
 - `docker compose stop <service>` frees GPU VRAM when switching workloads.
+- `cd launcher && npm test` runs the lightweight unit tests for route parsing/mutex logic.
 
 ## Coding Style & Naming Conventions
 - Node code in `launcher/` uses ES modules, 2-space indentation, and concise helper functions. Follow existing patterns for env parsing (e.g., `MAP__route__field`).
@@ -18,10 +19,10 @@
 - When adding scripts, prefer `.sh` with `set -euo pipefail` and minimal dependencies.
 
 ## Testing Guidelines
-- No automated test suite yet; manual verification is expected:
-  - `curl http://127.0.0.1:8000/<route>/v1/models -H "Authorization: Bearer $VLLM_API_KEY"` after changes.
-  - Watch `docker compose logs -f launcher` during cold starts to confirm healthy transitions.
-- If you introduce automated tests (e.g., Node unit tests), document the command in this file and wire it into CI.
+- `cd launcher && npm test` exercises the launcher helper functions (route map parsing, mutex, exclusive-start logic). Keep new logic covered here when possible.
+- Still run manual verification after changes:
+  - `curl http://127.0.0.1:8000/<route>/v1/models -H "Authorization: Bearer $VLLM_API_KEY"` after swapping models to ensure Docker orchestration works.
+  - Tail `docker compose logs -f launcher` during cold starts to confirm start/stop events fire as expected.
 
 ## Commit & Pull Request Guidelines
 - Use imperative, one-line commit subjects (e.g., “Add idle shutdown knob”). Group related doc/code changes together.
