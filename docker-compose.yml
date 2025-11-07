@@ -1,0 +1,98 @@
+---
+x-vllm-env: &vllm-env
+  HF_HUB_ENABLE_HF_TRANSFER: "1"
+  # Set a shared API key for all vLLM servers
+  VLLM_API_KEY: "${VLLM_API_KEY:-changeme}"
+
+x-vllm-common: &vllm-common
+  image: vllm/vllm-openai:latest
+  ipc: host
+  runtime: nvidia
+  environment:
+    <<: *vllm-env
+  deploy:
+    restart_policy: { condition: on-failure }
+  command: >
+    --host 0.0.0.0
+    --download-dir /models/.cache
+    --swap-space 8
+    --enable-prefix-caching
+    --api-key ${VLLM_API_KEY}
+  volumes:
+    - /srv/llm/.cache:/models/.cache
+  # If you want to serve local folders from /srv/llm/weights, also mount:
+  #   - /srv/llm/weights:/models
+
+services:
+  # --- Dev/agents: fast coder (3B) ---
+  coder3b:
+    container_name: coder3b
+    <<: *vllm-common
+    command: >
+      --model Qwen/Qwen2.5-Coder-3B-Instruct
+      --served-model-name qwen2.5-coder-3b
+      --port 8001
+      --dtype float16
+      --gpu-memory-utilization 0.9
+      --max-model-len 8192
+      --max-num-seqs 8
+      --swap-space 8
+      --enable-prefix-caching
+      --api-key ${VLLM_API_KEY}
+    ports: ["8001:8001"]
+    profiles: ["coder3b"]
+
+  # --- Website chat: small, friendly, fast ---
+  sitechat:
+    container_name: sitechat
+    <<: *vllm-common
+    command: >
+      --model microsoft/Phi-3.5-mini-instruct
+      --served-model-name sitechat
+      --port 8002
+      --dtype float16
+      --gpu-memory-utilization 0.9
+      --max-model-len 8192
+      --max-num-seqs 4
+      --api-key ${VLLM_API_KEY}
+    ports: ["8002:8002"]
+    profiles: ["chat"]
+
+  # --- Optional: 7B generalist (quantized to fit 16GB) ---
+  qwen7b-bnb4:
+    container_name: qwen7b-bnb4
+    <<: *vllm-common
+    command: >
+      --model Qwen/Qwen2.5-7B-Instruct
+      --quantization bitsandbytes
+      --served-model-name qwen2.5-7b-bnb4
+      --port 8003
+      --dtype auto
+      --gpu-memory-utilization 0.9
+      --max-model-len 4096
+      --max-num-seqs 6
+      --api-key ${VLLM_API_KEY}
+    ports: ["8003:8003"]
+    profiles: ["qwen7b"]
+
+  # --- Single front door on :8000 with path routing ---
+  launcher:
+    build: ./launcher
+    image: lazy-launcher:latest
+    container_name: launcher
+    environment:
+      MAP__coder__container: "coder3b"
+      MAP__coder__port: "8001"
+      MAP__chat__container: "sitechat"
+      MAP__chat__port: "8002"
+      MAP__qwen7b__container: "qwen7b-bnb4"
+      MAP__qwen7b__port: "8003"
+      IDLE_SECONDS: "600"
+      START_TIMEOUT_SECONDS: "120"
+      VLLM_API_KEY: "${VLLM_API_KEY}"
+    ports:
+      - "8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on: []   # it can start containers on demand
+
