@@ -75,6 +75,7 @@ Idle services shut down after `IDLE_SECONDS` (default 600). Tune `IDLE_SECONDS` 
 ## Operational tips
 
 - Pin container names and ports via `MAP__<route>__container|port` env vars (already prefilled).
+- Launcher enforces a one-model-at-a-time policy: every cold request stops other backends, starts the requested one, and only then proxies traffic.
 - Tail launcher logs during cold starts: `docker logs -f launcher`.
 - Use `docker compose stop <service>` to free GPU memory quickly when switching workloads.
 - For profile automation, see the scripts in `TODOs.txt` (switch script / Makefile ideas).
