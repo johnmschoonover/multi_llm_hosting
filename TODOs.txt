@@ -71,6 +71,9 @@
 - [ ] **System prompt** for website safety baked into `sitechat` requests (either at the launcher or upstream when you add your proxy later).
 - [ ] **CORS allowlist** (later, when you add a front-end): `theschoonover.net` and `www` subdomain.
 
+## Lifecycle management
+- [ ] **Systemd wrapper**: add a unit that starts the launcher and desired model profile, and on stop runs `docker compose stop coder3b sitechat qwen7b-bnb4` so all LLMs shut down with the launcher.
+
 ## Hardening (later but easy wins)
 - [ ] **Nginx or Caddy front** (TLS on LAN or for public).  
 - [ ] **Rate limiting** per IP / route.  
@@ -107,4 +110,3 @@ docker ps --format '{{.Names}}	{{.Status}}'
 # Stop everything but launcher
 docker compose stop coder3b sitechat qwen7b-bnb4
 ```
-
