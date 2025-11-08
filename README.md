@@ -32,6 +32,8 @@ This README describes how to run the vLLM multi-service stack inside WSL2 on a W
    ```env
    VLLM_API_KEY=<your hex token>
    HF_TOKEN=<huggingface token if you use gated models>
+   # Optional: comma-separated launcher routes to prewarm at boot (e.g., chat,general)
+   PREWARM_ROUTES=
    ```
      `.env` is already ignored; keep your API key here and rotate it periodically.
    `HF_TOKEN` is optional but required for gated checkpoints such as Meta Llama 3.1; reuse it for both
@@ -95,6 +97,18 @@ curl -s http://localhost:8000/coder/v1/models \
   -H "Authorization: Bearer $VLLM_API_KEY" | jq .
 ```
 
+### Launcher admin endpoints
+
+The proxy now exposes lightweight operational endpoints on the launcher port:
+
+| Path | Description |
+| ---- | ----------- |
+| `GET /healthz` | Returns `{ "status": "ok" }` when the launcher is up (no Docker calls).
+| `GET /routes` | Lists all configured `/route → container:port` mappings plus health/auth metadata.
+| `GET /stats` | Reports currently running containers, last-hit timestamps, and cold-start timing metrics gathered from Docker.
+
+These endpoints respond without proxying to model backends and are safe to call from readiness probes or dashboards.
+
 To generate an image through the diffusion profile, send a JSON payload to `/vision/generate` (no bearer token required):
 
 ```bash
@@ -122,6 +136,8 @@ swap checkpoints without reworking client integrations.
 - Launcher enforces a one-model-at-a-time policy: every cold request stops other backends, starts the requested one, and only then proxies traffic.
 - Tail launcher logs during cold starts: `docker logs -f launcher`.
 - Use `docker compose stop <service>` to free GPU memory quickly when switching workloads.
+- Set `PREWARM_ROUTES` (comma-separated, e.g., `chat`) to warm priority routes when the launcher boots and surface cold-start durations via `GET /stats` for SLO tracking.
+- Override `DOCKER_HOST_SOCKET` if your Docker Engine socket lives somewhere other than `/var/run/docker.sock`.
 - For profile automation, see the scripts in `TODOs.txt` (switch script / Makefile ideas).
 
 ## Cold-start timings (RTX 4080, WSL2, Nov 2025)
@@ -195,7 +211,7 @@ If the first succeeds but the second fails, revisit the Windows Firewall rule (P
 | Symptom | Likely cause | Fix |
 | ------- | ------------ | --- |
 | `curl` from Mac gets `connection refused` | Firewall rule missing or network marked Public | Re-run the firewall command above and ensure the Windows NIC is Private. |
-| Launcher logs `Error: spawn docker ENOENT` | Docker CLI not available inside container | Confirm Docker Desktop WSL integration is enabled and restart Docker Desktop before `docker compose up`. |
+| Launcher logs `Docker API ... ECONNREFUSED` | Docker socket not mounted or Docker Desktop stopped | Ensure `/var/run/docker.sock` is shared into the launcher container (default compose file already does) and restart Docker Desktop. |
 | `launch error: Backend not healthy in time` | Model still loading or GPU exhausted | Increase `START_TIMEOUT_SECONDS`, ensure VRAM is free, and pre-seed caches on SSD. |
 | `502` responses intermittently | Containers stopping mid-request or idle timeout too low | Raise `IDLE_SECONDS` and monitor launcher logs for stop/start churn. |
 | `CUDA out of memory` in vLLM | Multiple models active or quantization missing | Use compose profiles to run one heavy model at a time and double-check quantized configs (`bitsandbytes`/`awq` for the configured models). |

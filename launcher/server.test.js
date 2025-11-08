@@ -5,6 +5,7 @@ import {
   pickTarget,
   Mutex,
   createEnsureExclusive,
+  createAdminHandler,
 } from "./server.js";
 
 const noopLogger = { info() {}, warn() {}, error() {} };
@@ -58,6 +59,7 @@ test("ensureExclusive stops other containers before serving target", async () =>
     waitHealthy: async () => calls.push("wait"),
     trackedContainers: new Set(["coder3b", "sitechat"]),
     lastHitMap: new Map([["coder3b", Date.now()]]),
+    startMetricsMap: new Map(),
     logger: noopLogger,
   });
 
@@ -74,6 +76,7 @@ test("ensureExclusive starts target when not already running", async () => {
     waitHealthy: async (target) => calls.push(`wait:${target.health ?? "/v1/models"}`),
     trackedContainers: new Set(["coder3b", "sitechat"]),
     lastHitMap: new Map([["coder3b", Date.now()]]),
+    startMetricsMap: new Map(),
     logger: noopLogger,
   });
 
@@ -90,9 +93,90 @@ test("ensureExclusive skips start when target already running alone", async () =
     waitHealthy: async () => calls.push("wait"),
     trackedContainers: new Set(["sitechat"]),
     lastHitMap: new Map(),
+    startMetricsMap: new Map(),
     logger: noopLogger,
   });
 
   await ensureExclusive({ container: "sitechat", port: 8002 });
   assert.deepEqual(calls, []);
+});
+
+test("ensureExclusive records start metrics", async () => {
+  const metrics = new Map();
+  let current = 1_000;
+  const ensureExclusive = createEnsureExclusive({
+    listRunningContainers: async () => [],
+    stopContainer: async () => {},
+    startContainer: async () => {},
+    waitHealthy: async () => {},
+    trackedContainers: new Set(["sitechat"]),
+    lastHitMap: new Map(),
+    startMetricsMap: metrics,
+    now: () => {
+      const value = current;
+      current += 50;
+      return value;
+    },
+    logger: noopLogger,
+  });
+
+  await ensureExclusive({ container: "sitechat", port: 8002 });
+  const meta = metrics.get("sitechat");
+  assert.equal(meta.startCount, 1);
+  assert.equal(meta.totalDurationMs, 50);
+  assert.equal(meta.lastDurationMs, 50);
+  assert.equal(meta.lastStartedAt, 1_050);
+});
+
+function createMockRes() {
+  return {
+    statusCode: null,
+    headers: null,
+    body: "",
+    writeHead(code, headers) {
+      this.statusCode = code;
+      this.headers = headers;
+    },
+    end(payload = "") {
+      this.body += payload;
+      this.finished = true;
+    },
+  };
+}
+
+test("admin handler surfaces route metadata", async () => {
+  const handler = createAdminHandler({
+    routeMap: {
+      chat: { container: "chat-svc", port: 8001, health: "/live", auth: "passthrough" },
+    },
+    listRunningContainers: async () => ["chat-svc"],
+    lastHitMap: new Map([["chat-svc", 123]]),
+    startMetricsMap: new Map([["chat-svc", { totalDurationMs: 1000, startCount: 2, lastDurationMs: 600, lastStartedAt: 2000 }]]),
+    logger: noopLogger,
+  });
+
+  const routesRes = createMockRes();
+  const routesHandled = await handler({ method: "GET", url: "/routes" }, routesRes);
+  assert.equal(routesHandled, true);
+  assert.equal(routesRes.statusCode, 200);
+  const payload = JSON.parse(routesRes.body);
+  assert.equal(payload.routes[0].route, "chat");
+  assert.equal(payload.routes[0].health, "/live");
+
+  const statsRes = createMockRes();
+  const statsHandled = await handler({ method: "GET", url: "/stats" }, statsRes);
+  assert.equal(statsHandled, true);
+  assert.equal(statsRes.statusCode, 200);
+  const stats = JSON.parse(statsRes.body);
+  assert.deepEqual(stats.runningContainers, ["chat-svc"]);
+  assert.ok(stats.lastHits["chat-svc"].includes("1970"));
+  assert.equal(stats.startMetrics["chat-svc"].startCount, 2);
+  assert.equal(Math.round(stats.startMetrics["chat-svc"].averageDurationMs), 500);
+
+  const healthRes = createMockRes();
+  const healthHandled = await handler({ method: "GET", url: "/healthz" }, healthRes);
+  assert.equal(healthHandled, true);
+  assert.equal(healthRes.statusCode, 200);
+  const health = JSON.parse(healthRes.body);
+  assert.equal(health.status, "ok");
 });
