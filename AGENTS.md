@@ -11,6 +11,7 @@
 ## Build, Test, and Development Commands
 - `docker compose --profile launcher up -d launcher` boots only the proxy for quick iterations.
 - `docker compose --profile launcher --profile coder up -d` (or `chat`, `general`, `coderslow`, `agent`) launches the proxy plus a specific model intent.
+- `docker compose --profile launcher --profile ui up -d openwebui` starts the optional OpenWebUI front-end bound to the launcher on :3000.
 - `docker compose logs -f launcher` tails proxy logs; essential for diagnosing lazy-start events.
 - `docker compose stop <service>` frees GPU VRAM when switching workloads.
 - `cd launcher && npm test` runs the lightweight unit tests for route parsing/mutex logic.

@@ -1,6 +1,5 @@
 import http from "http";
 import httpProxy from "http-proxy";
-import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -9,6 +8,11 @@ const PORT = 8000;
 const IDLE_SECONDS = +(process.env.IDLE_SECONDS || 600);
 const START_TIMEOUT = +(process.env.START_TIMEOUT_SECONDS || 120);
 const VLLM_API_KEY = process.env.VLLM_API_KEY || "";
+const DOCKER_SOCKET = process.env.DOCKER_HOST_SOCKET || "/var/run/docker.sock";
+const PREWARM_ROUTES = (process.env.PREWARM_ROUTES || "")
+  .split(",")
+  .map((token) => token.trim().toLowerCase())
+  .filter(Boolean);
 
 const logger = {
   info: (...msg) => console.log(new Date().toISOString(), "[INFO]", ...msg),
@@ -33,30 +37,81 @@ const ROUTE_MAP = buildRouteMap();
 
 const proxy = httpProxy.createProxyServer({});
 const lastHit = new Map();
+export const startMetrics = new Map();
 const trackedContainers = new Set(
   Object.values(ROUTE_MAP)
     .map((entry) => entry?.container)
     .filter(Boolean),
 );
 
-function now() { return Math.floor(Date.now()/1000); }
-function sh(cmd, args=[]) {
-  return new Promise((resolve,reject)=>{
-    execFile(cmd,args,{maxBuffer:1024*1024},(e,stdout,stderr)=>{
-      if(e) return reject(new Error(stderr||e.message));
-      resolve(stdout.trim());
+function now() { return Math.floor(Date.now() / 1000); }
+
+function dockerRequest(pathname, {
+  method = "GET",
+  body,
+  headers = {},
+  allowedStatus,
+} = {}) {
+  const payload = typeof body === "string" ? body : body ? JSON.stringify(body) : null;
+  const reqHeaders = { ...headers };
+  if (payload) {
+    reqHeaders["Content-Type"] ??= "application/json";
+    reqHeaders["Content-Length"] = Buffer.byteLength(payload);
+  }
+  const validStatus = allowedStatus || [200, 201, 202, 204];
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      socketPath: DOCKER_SOCKET,
+      path: pathname,
+      method,
+      headers: reqHeaders,
+    }, (res) => {
+      const chunks = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8");
+        const status = res.statusCode ?? 0;
+        if (validStatus.includes(status)) {
+          resolve({ statusCode: status, body: text });
+          return;
+        }
+        reject(new Error(`Docker API ${method} ${pathname} failed: ${status} ${text}`));
+      });
     });
+    req.on("error", (err) => reject(err));
+    if (payload) req.write(payload);
+    req.end();
   });
 }
-async function listRunningContainers(){
-  const out = await sh("docker", ["ps","--format","{{.Names}}"]);
-  return out ? out.split("\n").filter(Boolean) : [];
+
+async function listRunningContainers() {
+  const filters = encodeURIComponent(JSON.stringify({ status: ["running"] }));
+  const { body } = await dockerRequest(`/containers/json?filters=${filters}`);
+  if (!body) return [];
+  try {
+    const parsed = JSON.parse(body);
+    return parsed
+      .map((item) => (item.Names?.[0] || "").replace(/^\//, ""))
+      .filter(Boolean);
+  } catch (err) {
+    throw new Error(`Failed to parse Docker list response: ${err.message}`);
+  }
 }
-async function startContainer(name){
-  await sh("docker", ["start", name]);
+
+async function startContainer(name) {
+  const encoded = encodeURIComponent(name);
+  await dockerRequest(`/containers/${encoded}/start`, {
+    method: "POST",
+    allowedStatus: [204, 304],
+  });
 }
-async function stopContainer(name){
-  await sh("docker", ["stop", name]);
+
+async function stopContainer(name) {
+  const encoded = encodeURIComponent(name);
+  await dockerRequest(`/containers/${encoded}/stop`, {
+    method: "POST",
+    allowedStatus: [204, 304],
+  });
 }
 function normalizeHealthPath(path) {
   if (!path) return "/v1/models";
@@ -137,6 +192,8 @@ export function createEnsureExclusive({
   waitHealthy: waitFn,
   trackedContainers: tracked,
   lastHitMap,
+  startMetricsMap = startMetrics,
+  now: nowFn = () => Date.now(),
   logger: loggerRef = logger,
 }) {
   const startMutex = new Mutex(loggerRef);
@@ -154,9 +211,23 @@ export function createEnsureExclusive({
       }
       if (!running.includes(container)) {
         loggerRef.info(`Starting ${container} on port ${port}`);
+        const startedAt = nowFn();
         await startFn(container);
         await waitFn(target);
-        loggerRef.info(`${container} ready on ${port}`);
+        const finishedAt = nowFn();
+        const duration = finishedAt - startedAt;
+        loggerRef.info(`${container} ready on ${port} after ${duration}ms`);
+        const existing = startMetricsMap.get(container) || {
+          totalDurationMs: 0,
+          startCount: 0,
+        };
+        const updated = {
+          totalDurationMs: existing.totalDurationMs + duration,
+          startCount: existing.startCount + 1,
+          lastDurationMs: duration,
+          lastStartedAt: finishedAt,
+        };
+        startMetricsMap.set(container, updated);
       } else {
         loggerRef.info(`${container} already running; skipping start`);
       }
@@ -171,6 +242,7 @@ const ensureExclusive = createEnsureExclusive({
   waitHealthy,
   trackedContainers,
   lastHitMap: lastHit,
+  startMetricsMap: startMetrics,
   logger,
 });
 
@@ -180,6 +252,89 @@ function rewritePath(original, seg) {
   if (!rewritten.startsWith("/")) rewritten = "/" + rewritten;
   return rewritten;
 }
+
+function normalizeRoutes(routeMap) {
+  return Object.entries(routeMap).map(([route, meta]) => ({
+    route,
+    container: meta.container,
+    port: meta.port,
+    health: normalizeHealthPath(meta.health),
+    auth: meta.auth || "inject", // default behavior injects auth
+  }));
+}
+
+export function createAdminHandler({
+  routeMap = ROUTE_MAP,
+  listRunningContainers: listFn = listRunningContainers,
+  lastHitMap = lastHit,
+  startMetricsMap = startMetrics,
+  logger: loggerRef = logger,
+} = {}) {
+  const normalizedRoutes = normalizeRoutes(routeMap);
+  return async function adminHandler(req, res) {
+    if (!req.url) return false;
+    const { pathname } = new URL(req.url, "http://launcher.local");
+    if (req.method === "GET" && pathname === "/healthz") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ status: "ok", routes: normalizedRoutes.length }));
+      return true;
+    }
+    if (req.method === "GET" && pathname === "/routes") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ routes: normalizedRoutes }));
+      return true;
+    }
+    if (req.method === "GET" && pathname === "/stats") {
+      try {
+        const running = await listFn();
+        const hits = Object.fromEntries(
+          Array.from(lastHitMap.entries()).map(([container, ts]) => [
+            container,
+            new Date(ts * 1000).toISOString(),
+          ]),
+        );
+        const metrics = Object.fromEntries(
+          Array.from(startMetricsMap.entries()).map(([container, meta]) => [
+            container,
+            {
+              averageDurationMs:
+                meta.startCount > 0 ? meta.totalDurationMs / meta.startCount : 0,
+              lastDurationMs: meta.lastDurationMs ?? null,
+              lastStartedAt: meta.lastStartedAt
+                ? new Date(meta.lastStartedAt).toISOString()
+                : null,
+              startCount: meta.startCount,
+            },
+          ]),
+        );
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            serverTime: new Date().toISOString(),
+            runningContainers: running,
+            lastHits: hits,
+            startMetrics: metrics,
+          }),
+        );
+        return true;
+      } catch (err) {
+        loggerRef.warn(`Failed to build stats response: ${err.message}`);
+        res.writeHead(502, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "stats_unavailable" }));
+        return true;
+      }
+    }
+    return false;
+  };
+}
+
+const adminHandler = createAdminHandler({
+  routeMap: ROUTE_MAP,
+  listRunningContainers,
+  lastHitMap: lastHit,
+  startMetricsMap: startMetrics,
+  logger,
+});
 
 function createServer() {
   proxy.removeAllListeners("error");
@@ -194,6 +349,9 @@ function createServer() {
   return http.createServer(async (req, res) => {
     const requestStart = Date.now();
     try {
+      if (await adminHandler(req, res)) {
+        return;
+      }
       const picked = pickTarget(req.url);
       if (!picked || !picked.target) {
         res.writeHead(404); return res.end("unknown route");
@@ -238,6 +396,25 @@ export function startServer() {
   const routes = Object.keys(ROUTE_MAP).sort();
   const prettyRoutes = routes.map((r) => `/${r}`).join(" ");
   server.listen(PORT, ()=>logger.info(`launcher on :${PORT} → ${prettyRoutes || "(no routes)"}`));
+  if (PREWARM_ROUTES.length) {
+    (async () => {
+      for (const route of PREWARM_ROUTES) {
+        const target = ROUTE_MAP[route];
+        if (!target) {
+          logger.warn(`Skipping unknown prewarm route: ${route}`);
+          continue;
+        }
+        try {
+          logger.info(`Prewarming /${route}`);
+          await ensureExclusive(target);
+          lastHit.set(target.container, now());
+          logger.info(`Prewarm complete for /${route}`);
+        } catch (err) {
+          logger.warn(`Prewarm failed for /${route}: ${err.message}`);
+        }
+      }
+    })();
+  }
   return server;
 }
 

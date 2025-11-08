@@ -154,3 +154,21 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on: []   # it can start containers on demand
+
+  # --- Optional web UI for chatting with hosted models ---
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: openwebui
+    environment:
+      OPENAI_API_BASE_URL: "http://launcher:8000"
+      OPENAI_API_KEY: "${VLLM_API_KEY:-changeme}"
+    depends_on:
+      - launcher
+    ports:
+      - "3000:8080"
+    volumes:
+      - openwebui-data:/app/backend/data
+    profiles: ["ui"]
+
+volumes:
+  openwebui-data:
