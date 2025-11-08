@@ -159,6 +159,15 @@ Times were recorded with `docker compose up -d <service>` followed by a curl loo
 - Keep `.env` out of Git (already enforced) and rotate `VLLM_API_KEY` quarterly.
 - Optional: front with Cloudflare Tunnel or Nginx/Caddy for TLS + auth.
 
+## VS Code Continue client
+
+Use `continue.config.json` as a ready-to-copy model list for the Continue extension:
+
+1. Install Continue in VS Code and open Command Palette → **Continue: Open Config File**. Replace the default contents with this repo’s `continue.config.json` or merge the `"models"` array.
+2. Keep `VLLM_API_KEY` defined in your shell (Continue will inject it into the `Authorization: Bearer` header).
+3. If VS Code runs on a different machine, swap `127.0.0.1` in each `baseUrl` for the LAN IP/hostname of the launcher but keep the `/coder`, `/chat`, `/general`, `/coderslow`, and `/agent` prefixes so Continue still hits the lazy-launch routes.
+4. The config already wires the fast coder route for tab completions; switch the `tabAutocompleteModel` block if you want a different backend for inline suggestions.
+
 ## Windows host configuration
 
 - **Firewall**: allow inbound TCP 8000 on the Private profile only, then confirm your network is set to Private in Windows Settings → Network & Internet.

@@ -109,7 +109,7 @@
 - [ ] **Auto-seed** task: if cache missing, run `huggingface-cli download` before first boot.
 
 ## Client configs (ready for copy)
-- [ ] **Continue (VS Code)** models configuration JSON.
+- [x] **Continue (VS Code)** models configuration JSON (`continue.config.json`).
 
 ## Sanity commands (for the agent to use)
 ```bash

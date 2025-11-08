@@ -1,0 +1,53 @@
+{
+  "$schema": "https://raw.githubusercontent.com/continuedev/continue/main/config.schema.json",
+  "models": [
+    {
+      "title": "Coder (fast, Qwen2.5 Coder 7B)",
+      "provider": "openai",
+      "model": "coder-fast",
+      "baseUrl": "http://127.0.0.1:8000/coder",
+      "apiKey": "${VLLM_API_KEY}",
+      "contextLength": 4096
+    },
+    {
+      "title": "Chat (Llama 3.1 8B)",
+      "provider": "openai",
+      "model": "chat-general",
+      "baseUrl": "http://127.0.0.1:8000/chat",
+      "apiKey": "${VLLM_API_KEY}",
+      "contextLength": 8192
+    },
+    {
+      "title": "General reasoning (DeepSeek R1 Distill)",
+      "provider": "openai",
+      "model": "general-reasoner",
+      "baseUrl": "http://127.0.0.1:8000/general",
+      "apiKey": "${VLLM_API_KEY}",
+      "contextLength": 4096
+    },
+    {
+      "title": "Coder (slow, DeepSeek Coder V2 Lite)",
+      "provider": "openai",
+      "model": "coder-slow",
+      "baseUrl": "http://127.0.0.1:8000/coderslow",
+      "apiKey": "${VLLM_API_KEY}",
+      "contextLength": 4096
+    },
+    {
+      "title": "Agent tools (Qwen2.5 Instruct)",
+      "provider": "openai",
+      "model": "agent-tools",
+      "baseUrl": "http://127.0.0.1:8000/agent",
+      "apiKey": "${VLLM_API_KEY}",
+      "contextLength": 4096
+    }
+  ],
+  "tabAutocompleteModel": {
+    "title": "Coder (fast, Qwen2.5 Coder 7B)",
+    "provider": "openai",
+    "model": "coder-fast",
+    "baseUrl": "http://127.0.0.1:8000/coder",
+    "apiKey": "${VLLM_API_KEY}",
+    "contextLength": 4096
+  }
+}
