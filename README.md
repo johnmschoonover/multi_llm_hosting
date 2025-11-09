@@ -17,6 +17,7 @@ This README describes how to run the vLLM multi-service stack inside WSL2 on a W
 | `launcher/` | Tiny Node.js proxy that autostarts containers and trims idle ones. |
 | `vision-server/` | FastAPI wrapper around a Stable Diffusion pipeline for the `/vision` route. |
 | *(Compose service)* `open-webui` | Optional Open WebUI container that points at the `/chat` route on the launcher. |
+| Docker volume `open-webui-data` | Persists Open WebUI accounts, chat history, and workspace settings. |
 | `.env` | Local-only secrets (`VLLM_API_KEY`, `COMPOSE_PROJECT_NAME`, etc.); ignored by Git. |
 | `TODOs.txt` | Living checklist for features, hardening, and DX niceties. |
 
@@ -87,6 +88,7 @@ docker compose --profile launcher --profile vision up -d
 
 # Open WebUI front-end (chat via `/chat` route)
 docker compose --profile launcher --profile webui up -d
+```
 
 ### Open WebUI quickstart
 
@@ -95,6 +97,14 @@ docker compose --profile launcher --profile webui up -d
 - Requests go through the `/chat` launcher route by default via `OPENAI_API_BASE_URL=http://launcher:8000/chat/v1`.
   Add more providers inside **Settings → Connections** if you want to expose the other launcher routes (e.g., `/coder`).
 - Open WebUI reuses the shared `VLLM_API_KEY`. Rotate it in `.env` and restart the containers if you update the key.
+- Authentication stays enabled by default; set `OPEN_WEBUI_AUTH=false` in `.env` if you trust every client on the LAN and want one-click access.
+
+User accounts, workspace preferences, and chat history are stored inside the `open-webui-data`
+named volume. Keep it mounted to preserve UI state across rebuilds, or remove it to factory reset:
+
+```bash
+# Substitute your COMPOSE_PROJECT_NAME if it differs
+docker volume rm ${COMPOSE_PROJECT_NAME:-multi_llm_hosting}_open-webui-data
 ```
 
 Customize the diffusion checkpoint or runtime limits by exporting `VISION_MODEL_ID`,

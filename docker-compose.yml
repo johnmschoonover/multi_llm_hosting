@@ -131,6 +131,7 @@ services:
     container_name: open-webui
     image: ghcr.io/open-webui/open-webui:main
     environment:
+      WEBUI_AUTH: "${OPEN_WEBUI_AUTH:-true}"
       OPENAI_API_BASE_URL: "http://launcher:8000/chat/v1"
       OPENAI_API_KEY: "${VLLM_API_KEY:-changeme}"
       ENABLE_OPENAI_API: "true"
