@@ -1,0 +1,105 @@
+$schema: https://raw.githubusercontent.com/continuedev/continue/main/config.schema.json
+models:
+  - name: coder-fast
+    provider: openai
+    model: coder-fast
+    apiBase: http://127.0.0.1:8000/coder/v1
+    apiKey: ${VLLM_API_KEY}
+    roles: [chat, edit, apply, summarize, autocomplete]
+    contextLength: 4096
+    maxTokens: 1024
+    defaultCompletionOptions:
+      temperature: 0.35
+      topP: 0.9
+      frequencyPenalty: 0
+      presencePenalty: 0
+    chatOptions:
+      baseSystemMessage: |
+        You are the fast coding profile (Qwen2.5 Coder 7B, 8-bit). Provide concise edits and diffs tailored for quick iterations.
+    autocompleteOptions:
+      maxPromptTokens: 768
+      debounceDelay: 250
+      modelTimeout: 6000
+      prefixPercentage: 0.8
+      maxSuffixPercentage: 0.2
+      useRecentlyEdited: true
+      useRecentlyOpened: true
+      useImports: true
+      template: |
+        {{{ prefix }}}
+        {{{ suffix }}}
+    timeout: 120000
+  - name: chat-general
+    provider: openai
+    model: chat-general
+    apiBase: http://127.0.0.1:8000/chat/v1
+    apiKey: ${VLLM_API_KEY}
+    roles: [chat, edit, apply, summarize]
+    contextLength: 8192
+    maxTokens: 2048
+    defaultCompletionOptions:
+      temperature: 0.7
+      topP: 0.95
+    chatOptions:
+      baseSystemMessage: |
+        You are the conversational assistant routed through `/chat`. Balance friendliness with accuracy and keep answers grounded in the provided context.
+    timeout: 120000
+  - name: general-reasoner
+    provider: openai
+    model: general-reasoner
+    apiBase: http://127.0.0.1:8000/general/v1
+    apiKey: ${VLLM_API_KEY}
+    roles: [chat, edit, apply, summarize]
+    contextLength: 4096
+    maxTokens: 1536
+    defaultCompletionOptions:
+      temperature: 0.2
+      topP: 0.9
+    chatOptions:
+      baseSystemMessage: |
+        You are the reasoning profile (`/general`). Show deliberate thinking when needed, structure answers step-by-step, and highlight intermediate calculations.
+    timeout: 120000
+  - name: coder-slow
+    provider: openai
+    model: coder-slow
+    apiBase: http://127.0.0.1:8000/coderslow/v1
+    apiKey: ${VLLM_API_KEY}
+    roles: [chat, edit, apply, summarize]
+    contextLength: 4096
+    maxTokens: 2048
+    defaultCompletionOptions:
+      temperature: 0.25
+      topP: 0.85
+    chatOptions:
+      baseSystemMessage: |
+        You are the high-accuracy coding backend (`/coderslow`). Favor thorough explanations, include tests when modifying code, and err on the side of completeness.
+    timeout: 180000
+  - name: agent-tools
+    provider: openai
+    model: agent-tools
+    apiBase: http://127.0.0.1:8000/agent/v1
+    apiKey: ${VLLM_API_KEY}
+    roles: [chat, edit, apply, summarize]
+    capabilities: [tool_use]
+    contextLength: 4096
+    maxTokens: 1536
+    defaultCompletionOptions:
+      temperature: 0.4
+      topP: 0.9
+    chatOptions:
+      baseSystemMessage: |
+        You are the tool-enabled profile (`/agent`). Invoke functions when available, describe the plan before executing tools, and summarize results clearly.
+      baseAgentSystemMessage: |
+        You are Continue's Agent mode backend. Coordinate multi-step plans, call tools when helpful, and keep messages succinct unless detailed reasoning is required.
+    timeout: 120000
+tabAutocompleteModel:
+  name: coder-fast
+  provider: openai
+  model: coder-fast
+  apiBase: http://127.0.0.1:8000/coder/v1
+  apiKey: ${VLLM_API_KEY}
+  contextLength: 4096
+  maxTokens: 512
+  autocompleteOptions:
+    debounceDelay: 250
+    modelTimeout: 6000

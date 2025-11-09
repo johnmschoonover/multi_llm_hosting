@@ -126,6 +126,21 @@ services:
     ports: ["8188:8188"]
     profiles: ["vision"]
 
+  # --- Open WebUI front-end for the stack ---
+  open-webui:
+    container_name: open-webui
+    image: ghcr.io/open-webui/open-webui:main
+    environment:
+      WEBUI_AUTH: "${OPEN_WEBUI_AUTH:-true}"
+      OPENAI_API_BASE_URL: "http://launcher:8000/chat/v1"
+      OPENAI_API_KEY: "${VLLM_API_KEY:-changeme}"
+      ENABLE_OPENAI_API: "true"
+    ports: ["3000:8080"]
+    profiles: ["webui"]
+    volumes:
+      - open-webui-data:/app/backend/data
+    depends_on: [launcher]
+
   # --- Single front door on :8000 with path routing ---
   launcher:
     build: ./launcher
@@ -154,3 +169,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on: []   # it can start containers on demand
+
+volumes:
+  open-webui-data:
