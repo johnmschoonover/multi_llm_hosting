@@ -154,3 +154,21 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on: []   # it can start containers on demand
+
+  # --- Browser UI for the launcher-backed routes ---
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:latest
+    container_name: open-webui
+    environment:
+      # Proxy all OpenAI-compatible requests through the launcher front door
+      OPENAI_API_BASE_URL: "http://launcher:8000"
+      OPENAI_API_KEY: "${VLLM_API_KEY:-changeme}"
+      ENABLE_OPENAI_API: "true"
+    ports: ["3000:8080"]
+    depends_on: [launcher]
+    volumes:
+      - open-webui-data:/app/backend/data
+    profiles: ["webui"]
+
+volumes:
+  open-webui-data:

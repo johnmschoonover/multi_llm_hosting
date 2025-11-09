@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `docker-compose.yml` orchestrates all vLLM backends plus the `launcher` proxy; treat it as the single source of truth for service config.
+- `docker-compose.yml` orchestrates all vLLM backends plus the `launcher` proxy (and optional `open-webui` frontend); treat it as the single source of truth for service config.
 - `launcher/` contains the Node.js lazy-launcher (Dockerfile, `package.json`, `server.js`); any proxy logic lives here.
 - `vision-server/` packages the diffusion FastAPI container that powers the `/vision` route. Keep it lightweight and GPU-first.
 - `README.md` documents host-level setup, while `TODOs.txt` tracks pending infra improvements; update both when behavior changes.

@@ -1,7 +1,7 @@
 # multi_llm_hosting
 
 Self-hosted playground for multiple vLLM backends plus a GPU diffusion server behind a single lazy-launching proxy.
-`docker-compose.yml` defines five intent-based language models (`coder-fast`, `chat-general`, `general-reasoner`, `coder-slow`, `agent-tools`), a Stable Diffusion profile (`vision-diffusion`), and a `launcher`
+`docker-compose.yml` defines five intent-based language models (`coder-fast`, `chat-general`, `general-reasoner`, `coder-slow`, `agent-tools`), a Stable Diffusion profile (`vision-diffusion`), an optional Open WebUI frontend (`open-webui`), and a `launcher`
 container that routes `/coder`, `/chat`, `/general`, `/coderslow`, `/agent`, and `/vision` traffic to the right backend, starting/stopping
 containers on demand to conserve GPU memory.
 
@@ -83,6 +83,9 @@ docker compose --profile launcher --profile agent up -d
 
 # Vision diffusion service (Stable Diffusion v1.5 FastAPI wrapper)
 docker compose --profile launcher --profile vision up -d
+
+# Browser UI (Open WebUI backed by the launcher front door)
+docker compose --profile launcher --profile webui up -d
 ```
 
 Customize the diffusion checkpoint or runtime limits by exporting `VISION_MODEL_ID`,
@@ -128,6 +131,23 @@ Idle services shut down after `IDLE_SECONDS` (default 600). Tune `IDLE_SECONDS` 
 `START_TIMEOUT_SECONDS` in the compose file via environment overrides. Each route name matches its
 purpose (`/coder`, `/chat`, `/general`, `/coderslow`, `/agent`) rather than specific model families so you can
 swap checkpoints without reworking client integrations.
+
+## Open WebUI frontend
+
+Launch the optional `open-webui` profile when you want a browser-based playground. The container exposes port `3000` on the
+host and proxies all OpenAI-compatible calls through the `launcher` service so every route (`/coder`, `/chat`, etc.) still benefits
+from lazy boot/shutdown.
+
+1. Start the stack with:
+   ```bash
+   docker compose --profile launcher --profile webui up -d
+   ```
+2. Visit http://localhost:3000 (or replace `localhost` with your host IP for LAN clients).
+3. Sign in with a local Open WebUI account. The built-in default workspace already points at the launcher using your
+   `VLLM_API_KEY` as the bearer token; no additional setup is required.
+
+User accounts, chat history, and workspace configuration persist inside the `open-webui-data` named volume defined in
+`docker-compose.yml`. Remove the volume (`docker volume rm multi_llm_hosting_open-webui-data`) to reset the UI to defaults.
 
 ## Operational tips
 
