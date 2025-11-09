@@ -4,13 +4,14 @@
 - `docker-compose.yml` orchestrates all vLLM backends plus the `launcher` proxy; treat it as the single source of truth for service config.
 - `launcher/` contains the Node.js lazy-launcher (Dockerfile, `package.json`, `server.js`); any proxy logic lives here.
 - `vision-server/` packages the diffusion FastAPI container that powers the `/vision` route. Keep it lightweight and GPU-first.
+- The optional `open-webui` compose service exposes a chat-centric UI against the `/chat` launcher route; keep it stateless besides its bound data volume.
 - `README.md` documents host-level setup, while `TODOs.txt` tracks pending infra improvements; update both when behavior changes.
 - Secrets belong in `.env` (ignored). Do not add sensitive data to tracked files.
 - Whenever env vars are added/removed/repurposed in compose or code, update `.env.example` in the same change so newcomers know which keys to set (e.g., `HF_TOKEN`).
 
 ## Build, Test, and Development Commands
 - `docker compose --profile launcher up -d launcher` boots only the proxy for quick iterations.
-- `docker compose --profile launcher --profile coder up -d` (or `chat`, `general`, `coderslow`, `agent`) launches the proxy plus a specific model intent.
+- `docker compose --profile launcher --profile coder up -d` (or `chat`, `general`, `coderslow`, `agent`, `vision`, `webui`) launches the proxy plus a specific profile.
 - `docker compose logs -f launcher` tails proxy logs; essential for diagnosing lazy-start events.
 - `docker compose stop <service>` frees GPU VRAM when switching workloads.
 - `cd launcher && npm test` runs the lightweight unit tests for route parsing/mutex logic.
