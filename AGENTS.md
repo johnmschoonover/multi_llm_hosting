@@ -4,6 +4,7 @@
 - `docker-compose.yml` orchestrates all vLLM backends plus the `launcher` proxy; treat it as the single source of truth for service config.
 - `launcher/` contains the Node.js lazy-launcher (Dockerfile, `package.json`, `server.js`); any proxy logic lives here.
 - `vision-server/` packages the diffusion FastAPI container that powers the `/vision` route. Keep it lightweight and GPU-first.
+- `open-webui` lives exclusively in `docker-compose.yml`; keep its base URL targeting the launcher and persist state through the `open-webui-data` volume.
 - `README.md` documents host-level setup, while `TODOs.txt` tracks pending infra improvements; update both when behavior changes.
 - Secrets belong in `.env` (ignored). Do not add sensitive data to tracked files.
 - Whenever env vars are added/removed/repurposed in compose or code, update `.env.example` in the same change so newcomers know which keys to set (e.g., `HF_TOKEN`).

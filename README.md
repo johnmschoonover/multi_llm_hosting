@@ -3,7 +3,7 @@
 Self-hosted playground for multiple vLLM backends plus a GPU diffusion server behind a single lazy-launching proxy.
 `docker-compose.yml` defines five intent-based language models (`coder-fast`, `chat-general`, `general-reasoner`, `coder-slow`, `agent-tools`), a Stable Diffusion profile (`vision-diffusion`), and a `launcher`
 container that routes `/coder`, `/chat`, `/general`, `/coderslow`, `/agent`, and `/vision` traffic to the right backend, starting/stopping
-containers on demand to conserve GPU memory.
+containers on demand to conserve GPU memory. An optional Open WebUI service rounds things out for a browser-native chat client.
 
 ## Overview
 
@@ -18,6 +18,7 @@ This README describes how to run the vLLM multi-service stack inside WSL2 on a W
 | `vision-server/` | FastAPI wrapper around a Stable Diffusion pipeline for the `/vision` route. |
 | `.env` | Local-only secrets (`VLLM_API_KEY`, `COMPOSE_PROJECT_NAME`, etc.); ignored by Git. |
 | `TODOs.txt` | Living checklist for features, hardening, and DX niceties. |
+| Docker volume `open-webui-data` | Persists Open WebUI user/database state outside the container lifecycle. |
 
 ## Prerequisites
 
@@ -84,6 +85,17 @@ docker compose --profile launcher --profile agent up -d
 # Vision diffusion service (Stable Diffusion v1.5 FastAPI wrapper)
 docker compose --profile launcher --profile vision up -d
 ```
+
+Bring up the browser-based client alongside the launcher (prewired to the `/chat` route by default):
+
+```bash
+docker compose --profile launcher --profile ui up -d
+```
+
+After the containers settle, browse to [http://localhost:3000](http://localhost:3000) (or the LAN hostname) to create the first
+Open WebUI admin user. The service forwards OpenAI-compatible requests to `http://launcher:8000/chat` out of the box. Add
+additional providers for `/coder`, `/general`, and friends from **Settings → Models → Add Provider**, reusing your
+`VLLM_API_KEY` as the credential.
 
 Customize the diffusion checkpoint or runtime limits by exporting `VISION_MODEL_ID`,
 `VISION_MODEL_REVISION`, `VISION_ENABLE_SAFETY_CHECKER`, or `VISION_MAX_EDGE` before
