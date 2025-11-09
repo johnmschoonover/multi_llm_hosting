@@ -1,7 +1,7 @@
 # multi_llm_hosting
 
-Self-hosted playground for multiple vLLM backends plus a GPU diffusion server behind a single lazy-launching proxy.
-`docker-compose.yml` defines five intent-based language models (`coder-fast`, `chat-general`, `general-reasoner`, `coder-slow`, `agent-tools`), a Stable Diffusion profile (`vision-diffusion`), and a `launcher`
+Self-hosted playground for multiple vLLM backends plus a GPU diffusion server behind a single lazy-launching proxy and an optional Open WebUI front-end.
+`docker-compose.yml` defines five intent-based language models (`coder-fast`, `chat-general`, `general-reasoner`, `coder-slow`, `agent-tools`), a Stable Diffusion profile (`vision-diffusion`), an `open-webui` service, and a `launcher`
 container that routes `/coder`, `/chat`, `/general`, `/coderslow`, `/agent`, and `/vision` traffic to the right backend, starting/stopping
 containers on demand to conserve GPU memory.
 
@@ -16,6 +16,7 @@ This README describes how to run the vLLM multi-service stack inside WSL2 on a W
 | `docker-compose.yml` | All service definitions, profiles, and shared env blocks. |
 | `launcher/` | Tiny Node.js proxy that autostarts containers and trims idle ones. |
 | `vision-server/` | FastAPI wrapper around a Stable Diffusion pipeline for the `/vision` route. |
+| `open-webui` (container) | Optional chat UI image that targets the launcher’s `/chat` route. |
 | `.env` | Local-only secrets (`VLLM_API_KEY`, `COMPOSE_PROJECT_NAME`, etc.); ignored by Git. |
 | `TODOs.txt` | Living checklist for features, hardening, and DX niceties. |
 
@@ -83,6 +84,9 @@ docker compose --profile launcher --profile agent up -d
 
 # Vision diffusion service (Stable Diffusion v1.5 FastAPI wrapper)
 docker compose --profile launcher --profile vision up -d
+
+# Open WebUI front-end (binds to http://localhost:3000)
+docker compose --profile launcher --profile webui up -d
 ```
 
 Customize the diffusion checkpoint or runtime limits by exporting `VISION_MODEL_ID`,
@@ -96,6 +100,14 @@ The launcher listens on `:8000` and expects requests like:
 curl -s http://localhost:8000/coder/v1/models \
   -H "Authorization: Bearer $VLLM_API_KEY" | jq .
 ```
+
+### Open WebUI
+
+Bring up the optional `open-webui` profile if you prefer a browser client over raw `curl` calls. The container binds to
+`http://localhost:3000` (or `http://<host-ip>:3000` on your LAN) and is preconfigured to use the launcher’s `/chat`
+route through the OpenAI-compatible API surface. Sign in with the first account you create (authentication remains enabled by
+default). Change the target model or add more providers from the **Settings → Connections** tab inside Open WebUI; use
+`http://launcher:8000/<route>` as the base URL when wiring additional routes.
 
 ### Launcher admin endpoints
 
