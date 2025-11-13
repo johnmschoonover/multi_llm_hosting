@@ -13,8 +13,6 @@ x-vllm-common: &vllm-common
   runtime: nvidia
   environment:
     <<: *vllm-env
-  deploy:
-    restart_policy: { condition: on-failure }
   command: >
     --host 0.0.0.0
     --download-dir /models/.cache
@@ -31,6 +29,7 @@ services:
   coder-fast:
     container_name: coder-fast
     <<: *vllm-common
+    restart: "no"
     command: >
       --model Qwen/Qwen2.5-Coder-7B-Instruct
       --quantization bitsandbytes
@@ -47,6 +46,7 @@ services:
   chat-general:
     container_name: chat-general
     <<: *vllm-common
+    restart: "no"
     command: >
       --model meta-llama/Meta-Llama-3.1-8B-Instruct
       --quantization bitsandbytes
@@ -63,6 +63,7 @@ services:
   general-reasoner:
     container_name: general-reasoner
     <<: *vllm-common
+    restart: "no"
     command: >
       --model deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
       --quantization bitsandbytes
@@ -79,6 +80,7 @@ services:
   coder-slow:
     container_name: coder-slow
     <<: *vllm-common
+    restart: "no"
     command: >
       --model TechxGenus/DeepSeek-Coder-V2-Lite-Instruct-AWQ
       --quantization awq
@@ -95,6 +97,7 @@ services:
   agent-tools:
     container_name: agent-tools
     <<: *vllm-common
+    restart: "no"
     command: >
       --model Qwen/Qwen2.5-7B-Instruct
       --quantization bitsandbytes
@@ -113,8 +116,7 @@ services:
     build: ./vision-server
     image: vision-diffusion:latest
     runtime: nvidia
-    deploy:
-      restart_policy: { condition: on-failure }
+    restart: "no"
     environment:
       MODEL_ID: "${VISION_MODEL_ID:-runwayml/stable-diffusion-v1-5}"
       MODEL_REVISION: "${VISION_MODEL_REVISION:-}"
@@ -130,6 +132,7 @@ services:
   open-webui:
     container_name: open-webui
     image: ghcr.io/open-webui/open-webui:main
+    restart: unless-stopped
     environment:
       WEBUI_AUTH: "${OPEN_WEBUI_AUTH:-true}"
       OPENAI_API_BASE_URL: "http://launcher:8000/chat/v1"
@@ -146,6 +149,7 @@ services:
     build: ./launcher
     image: lazy-launcher:latest
     container_name: launcher
+    restart: unless-stopped
     environment:
       MAP__coder__container: "coder-fast"
       MAP__coder__port: "8001"

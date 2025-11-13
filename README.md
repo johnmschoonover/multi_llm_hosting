@@ -90,6 +90,8 @@ docker compose --profile launcher --profile vision up -d
 docker compose --profile launcher --profile webui up -d
 ```
 
+> **Heads-up:** All vLLM model containers now set `restart: "no"` so they stay stopped after you `docker compose stop` them or restart the Docker engine; the launcher will spin them up on demand the next time traffic hits their route. The `launcher` and `open-webui` services themselves use `restart: unless-stopped`, so they automatically return after a daemon restart unless you explicitly stop them.
+
 ### Open WebUI quickstart
 
 - Browse to [http://localhost:3000](http://localhost:3000) (or the host mapped to port `3000`) once the container is up.
