@@ -165,6 +165,7 @@ services:
       MAP__vision__port: "8188"
       MAP__vision__health: "/healthz"
       MAP__vision__auth: "passthrough"
+      MAP__vision__models: "vision-diffusion,sd15"
       IDLE_SECONDS: "600"
       START_TIMEOUT_SECONDS: "120"
       VLLM_API_KEY: "${VLLM_API_KEY}"

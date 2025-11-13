@@ -100,6 +100,16 @@ docker compose --profile launcher --profile webui up -d
   Add more providers inside **Settings → Connections** if you want to expose the other launcher routes (e.g., `/coder`).
 - Open WebUI reuses the shared `VLLM_API_KEY`. Rotate it in `.env` and restart the containers if you update the key.
 - Authentication stays enabled by default; set `OPEN_WEBUI_AUTH=false` in `.env` if you trust every client on the LAN and want one-click access.
+- **Unified OpenAI connector:** Instead of juggling multiple connectors, point a single OpenAI-compatible connection at `http://launcher:8000/openai` (no trailing `/v1`). The launcher now returns every model (LLMs + diffusion) from `GET /openai/v1/models`, so Open WebUI sees them in one dropdown without cold-starting each backend just for health checks.
+- **Default system prompt:** Open WebUI lets you bake persona instructions into every `/chat` call without touching the launcher. After logging in:
+  1. Go to **Settings → Interface** and edit **Default system prompt**. The text you enter here is prepended to every new chat (existing threads keep their original prompt).
+  2. If you prefer per-connector prompts, open **Settings → Connections**, select the `OpenAI Compatible` entry that points at `http://launcher:8000/chat/v1`, and fill in **Default system prompt** under that connection instead.
+  3. Save changes and start a fresh conversation to confirm the model reflects the new instruction. Both forms store the value inside the `open-webui-data` volume so it persists across container restarts.
+- **Optional direct vision connector:** If you want the legacy arrangement (separate connector aimed straight at the diffusion route), you can still do it:
+  1. Make sure the `vision-diffusion` service is running (e.g., `docker compose --profile launcher --profile vision up -d` or let the launcher cold-start it).
+  2. In Open WebUI, open **Settings → Connections → Images**, click **Add Connection**, and choose **OpenAI Compatible**.
+  3. Set **Base URL** to `http://launcher:8000/vision`, keep the endpoint at `/v1/images/generations`, and enter any placeholder API key if the UI insists (the launcher sets `MAP__vision__auth=passthrough`, so the key is ignored).
+  4. Save, head to the **Images** tab, select the connector you just created, and generate an image to confirm the round-trip works.
 
 User accounts, workspace preferences, and chat history are stored inside the `open-webui-data`
 named volume. Keep it mounted to preserve UI state across rebuilds, or remove it to factory reset:
@@ -147,6 +157,44 @@ curl -s http://localhost:8000/vision/generate \
 ```
 
 The response includes the base64-encoded PNG, elapsed time, and seed; adjust width/height with the optional fields documented in `vision-server/app.py`.
+
+You can also hit the OpenAI-compatible endpoint that Open WebUI uses:
+
+```bash
+curl -s http://localhost:8000/vision/v1/images/generations \
+  -H "Content-Type: application/json" \
+  -d '{
+        "prompt": "sunset over a future city, cinematic lighting",
+        "size": "768x512"
+      }' | jq -r '.data[0].b64_json' | base64 -d > output.png
+```
+
+### Unified OpenAI endpoint
+
+The launcher now mirrors a small slice of the OpenAI REST API at `/openai/v1/*` so tools only have to talk to one base URL:
+
+- `GET /openai/v1/models` – returns every model id the launcher can spin up. Customize the ids by setting `MAP__<route>__models` (comma-separated) in `.env`; otherwise the container name is used.
+- `POST /openai/v1/chat/completions` – route is selected via the `model` field and lazily started on demand.
+- `POST /openai/v1/images/generations` – proxies to the diffusion backend using the same `model` mapping as above.
+
+Examples:
+
+```bash
+curl -s http://localhost:8000/openai/v1/models | jq .
+
+curl -s http://localhost:8000/openai/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+        "model": "chat-general",
+        "messages": [
+          { "role": "system", "content": "You are a concise assistant." },
+          { "role": "user", "content": "Summarize the repo layout." }
+        ],
+        "temperature": 0.2
+      }' | jq .
+```
+
+Both responses above complete even if the backing containers are stopped—the launcher handles the cold start and health checks transparently.
 
 Idle services shut down after `IDLE_SECONDS` (default 600). Tune `IDLE_SECONDS` and
 `START_TIMEOUT_SECONDS` in the compose file via environment overrides. Each route name matches its

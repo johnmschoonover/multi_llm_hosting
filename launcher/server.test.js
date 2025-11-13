@@ -6,6 +6,8 @@ import {
   Mutex,
   createEnsureExclusive,
   createAdminHandler,
+  buildModelIndex,
+  createOpenAIHandler,
 } from "./server.js";
 
 const noopLogger = { info() {}, warn() {}, error() {} };
@@ -17,11 +19,12 @@ test("buildRouteMap collects prefixed env vars", () => {
     MAP__coder__container: "coder3b",
     MAP__vision__health: "/healthz",
     MAP__vision__auth: "passthrough",
+    MAP__vision__models: "vision-diffusion,sd15",
   };
   const map = buildRouteMap(env);
   assert.deepEqual(map.chat, { container: "sitechat", port: "8002" });
   assert.deepEqual(map.coder, { container: "coder3b" });
-  assert.deepEqual(map.vision, { health: "/healthz", auth: "passthrough" });
+  assert.deepEqual(map.vision, { health: "/healthz", auth: "passthrough", models: ["vision-diffusion", "sd15"] });
 });
 
 test("pickTarget returns matching route metadata", () => {
@@ -133,9 +136,11 @@ function createMockRes() {
     statusCode: null,
     headers: null,
     body: "",
+    headersSent: false,
     writeHead(code, headers) {
       this.statusCode = code;
       this.headers = headers;
+      this.headersSent = true;
     },
     end(payload = "") {
       this.body += payload;
@@ -143,6 +148,67 @@ function createMockRes() {
     },
   };
 }
+
+test("openai handler lists models and proxies chat completions", async () => {
+  const routeMap = {
+    chat: { container: "chat-svc", port: 8002, auth: "inject", models: ["chat-general"] },
+    vision: { container: "vision", port: 8188, auth: "passthrough", models: ["vision-diffusion"] },
+  };
+  const { modelToRoute, metadata } = buildModelIndex(routeMap, { logger: noopLogger });
+  const ensureCalls = [];
+  const lastHitMap = new Map();
+  const forwardCalls = [];
+  const handler = createOpenAIHandler({
+    routeMap,
+    modelToRoute,
+    metadata,
+    ensureExclusiveFn: async (target) => ensureCalls.push(target.container),
+    lastHitMap,
+    readBody: async () => JSON.stringify({ model: "chat-general", messages: [] }),
+    forwardRequest: async ({ path, bodyBuffer, headers, target, res }) => {
+      forwardCalls.push({ path, payload: bodyBuffer.toString("utf8"), headers, target: target.container });
+      if (!res.headersSent) res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"id":"resp"}');
+    },
+    logger: noopLogger,
+    now: () => 123,
+  });
+
+  const modelsRes = createMockRes();
+  await handler({ method: "GET", url: "/openai/v1/models" }, modelsRes);
+  assert.equal(modelsRes.statusCode, 200);
+  const modelsPayload = JSON.parse(modelsRes.body);
+  assert.equal(modelsPayload.object, "list");
+  assert.equal(modelsPayload.data.length, 2);
+
+  const req = { method: "POST", url: "/openai/v1/chat/completions?stream=false", headers: {} };
+  const res = createMockRes();
+  await handler(req, res);
+  assert.deepEqual(ensureCalls, ["chat-svc"]);
+  assert.equal(lastHitMap.get("chat-svc"), 123);
+  assert.equal(forwardCalls.length, 1);
+  assert.equal(forwardCalls[0].path, "/v1/chat/completions?stream=false");
+  assert.equal(forwardCalls[0].payload, JSON.stringify({ model: "chat-general", messages: [] }));
+});
+
+test("openai handler rejects unknown models", async () => {
+  const routeMap = {
+    chat: { container: "chat-svc", port: 8002, auth: "inject", models: ["chat-general"] },
+  };
+  const { modelToRoute, metadata } = buildModelIndex(routeMap, { logger: noopLogger });
+  const handler = createOpenAIHandler({
+    routeMap,
+    modelToRoute,
+    metadata,
+    readBody: async () => JSON.stringify({ model: "missing" }),
+    logger: noopLogger,
+  });
+  const res = createMockRes();
+  await handler({ method: "POST", url: "/openai/v1/chat/completions" }, res);
+  assert.equal(res.statusCode, 400);
+  const payload = JSON.parse(res.body);
+  assert.ok(payload.error.message.includes("unknown_model"));
+});
 
 test("admin handler surfaces route metadata", async () => {
   const handler = createAdminHandler({

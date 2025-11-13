@@ -13,6 +13,9 @@ const PREWARM_ROUTES = (process.env.PREWARM_ROUTES || "")
   .split(",")
   .map((token) => token.trim().toLowerCase())
   .filter(Boolean);
+const SERVER_STARTED_AT = Math.floor(Date.now() / 1000);
+const JSON_BODY_LIMIT_BYTES = 5 * 1024 * 1024; // 5 MiB
+const JSON_BODY_TIMEOUT_MS = 10_000;
 
 const logger = {
   info: (...msg) => console.log(new Date().toISOString(), "[INFO]", ...msg),
@@ -20,15 +23,24 @@ const logger = {
   error: (...msg) => console.error(new Date().toISOString(), "[ERROR]", ...msg),
 };
 
+function parseList(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter(Boolean);
+  return String(value)
+    .split(",")
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
 export function buildRouteMap(env = process.env) {
   const map = {};
   for (const [k, v] of Object.entries(env)) {
-    const m = k.match(/^MAP__([^_]+)__(container|port|health|auth)$/);
+    const m = k.match(/^MAP__([^_]+)__(container|port|health|auth|models)$/);
     if (!m) continue;
     const key = m[1];
     const field = m[2];
     map[key] ??= {};
-    map[key][field] = v;
+    map[key][field] = field === "models" ? parseList(v) : v;
   }
   return map;
 }
@@ -43,6 +55,39 @@ const trackedContainers = new Set(
     .map((entry) => entry?.container)
     .filter(Boolean),
 );
+
+function defaultModelsForRoute(route, meta = {}) {
+  if (Array.isArray(meta.models) && meta.models.length) {
+    return meta.models;
+  }
+  if (meta.container) return [meta.container];
+  return [route];
+}
+
+export function buildModelIndex(routeMap, { logger: loggerRef = logger } = {}) {
+  const modelToRoute = new Map();
+  const metadata = [];
+  for (const [route, meta] of Object.entries(routeMap)) {
+    const finalModels = defaultModelsForRoute(route, meta);
+    meta.models = finalModels;
+    for (const modelId of finalModels) {
+      if (modelToRoute.has(modelId)) {
+        const previous = modelToRoute.get(modelId);
+        loggerRef.warn(`Model ${modelId} already mapped to /${previous}; overriding to /${route}`);
+      }
+      modelToRoute.set(modelId, route);
+      metadata.push({
+        id: modelId,
+        route,
+        container: meta.container,
+        ownedBy: meta.container || "lazy-launcher",
+      });
+    }
+  }
+  return { modelToRoute, metadata };
+}
+
+const { modelToRoute: MODEL_TO_ROUTE, metadata: MODEL_METADATA } = buildModelIndex(ROUTE_MAP, { logger });
 
 function now() { return Math.floor(Date.now() / 1000); }
 
@@ -260,7 +305,220 @@ function normalizeRoutes(routeMap) {
     port: meta.port,
     health: normalizeHealthPath(meta.health),
     auth: meta.auth || "inject", // default behavior injects auth
+    models: meta.models || [],
   }));
+}
+
+function respondJson(res, statusCode, payload) {
+  if (!res.headersSent) {
+    res.writeHead(statusCode, { "content-type": "application/json" });
+  }
+  res.end(JSON.stringify(payload));
+}
+
+export function readRequestBody(req, {
+  limit = JSON_BODY_LIMIT_BYTES,
+  timeoutMs = JSON_BODY_TIMEOUT_MS,
+} = {}) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    let done = false;
+    const cleanup = () => {
+      done = true;
+      clearTimeout(timer);
+      req.off("data", onData);
+      req.off("end", onEnd);
+      req.off("error", onError);
+      req.off("aborted", onAborted);
+    };
+    const timer = setTimeout(() => {
+      if (done) return;
+      cleanup();
+      const err = new Error("body_timeout");
+      err.code = "BODY_TIMEOUT";
+      reject(err);
+      req.destroy(err);
+    }, timeoutMs);
+    const onData = (chunk) => {
+      total += chunk.length;
+      if (total > limit) {
+        cleanup();
+        const err = new Error("body_too_large");
+        err.code = "BODY_TOO_LARGE";
+        err.limit = limit;
+        reject(err);
+        req.destroy(err);
+        return;
+      }
+      chunks.push(chunk);
+    };
+    const onEnd = () => {
+      cleanup();
+      resolve(Buffer.concat(chunks).toString("utf8"));
+    };
+    const onError = (err) => {
+      if (done) return;
+      cleanup();
+      reject(err);
+    };
+    const onAborted = () => {
+      if (done) return;
+      cleanup();
+      const err = new Error("body_aborted");
+      err.code = "BODY_ABORTED";
+      reject(err);
+    };
+    req.on("data", onData);
+    req.on("end", onEnd);
+    req.on("error", onError);
+    req.on("aborted", onAborted);
+  });
+}
+
+function prepareForwardHeaders(originalHeaders = {}, bodyLength, target) {
+  const headers = { ...(originalHeaders || {}) };
+  delete headers.host;
+  delete headers["content-length"];
+  headers.host = target.container;
+  headers["content-length"] = bodyLength;
+  const shouldInjectAuth = target?.auth !== "passthrough";
+  if (shouldInjectAuth && VLLM_API_KEY && !headers.authorization) {
+    headers.authorization = `Bearer ${VLLM_API_KEY}`;
+  }
+  return headers;
+}
+
+function forwardOpenAIRequest({
+  method,
+  path,
+  bodyBuffer,
+  headers,
+  target,
+  res,
+}) {
+  return new Promise((resolve, reject) => {
+    const proxyReq = http.request({
+      hostname: target.container,
+      port: target.port,
+      path,
+      method,
+      headers,
+    }, (proxyRes) => {
+      if (!res.headersSent) {
+        res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
+      }
+      proxyRes.pipe(res);
+      proxyRes.on("end", resolve);
+    });
+    proxyReq.on("error", (err) => reject(err));
+    res.once("close", () => proxyReq.destroy());
+    proxyReq.end(bodyBuffer);
+  });
+}
+
+export function createOpenAIHandler({
+  routeMap = ROUTE_MAP,
+  modelToRoute = MODEL_TO_ROUTE,
+  metadata = MODEL_METADATA,
+  ensureExclusiveFn = ensureExclusive,
+  lastHitMap = lastHit,
+  readBody = readRequestBody,
+  forwardRequest = forwardOpenAIRequest,
+  logger: loggerRef = logger,
+  now: nowFn = now,
+} = {}) {
+  const modelsPayload = {
+    object: "list",
+    data: metadata.map((entry) => ({
+      object: "model",
+      id: entry.id,
+      created: SERVER_STARTED_AT,
+      owned_by: entry.ownedBy,
+    })),
+  };
+
+  async function handleProxy(req, res, forwardSuffix, search = "") {
+    let rawBody;
+    try {
+      rawBody = await readBody(req);
+    } catch (err) {
+      if (err?.code === "BODY_TOO_LARGE") {
+        respondJson(res, 413, { error: { message: "body_too_large" } });
+      } else if (err?.code === "BODY_TIMEOUT") {
+        respondJson(res, 408, { error: { message: "body_timeout" } });
+      } else if (err?.code === "BODY_ABORTED") {
+        respondJson(res, 400, { error: { message: "request_aborted" } });
+      } else {
+        respondJson(res, 400, { error: { message: "body_read_failed" } });
+      }
+      return true;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(rawBody || "{}");
+    } catch (err) {
+      respondJson(res, 400, { error: { message: "invalid_json" } });
+      return true;
+    }
+    const modelId = parsed?.model;
+    if (!modelId || typeof modelId !== "string") {
+      respondJson(res, 400, { error: { message: "missing_model" } });
+      return true;
+    }
+    const route = modelToRoute.get(modelId);
+    if (!route) {
+      respondJson(res, 400, { error: { message: `unknown_model:${modelId}` } });
+      return true;
+    }
+    const target = routeMap[route];
+    if (!target) {
+      respondJson(res, 502, { error: { message: "route_unavailable" } });
+      return true;
+    }
+    try {
+      await ensureExclusiveFn(target);
+    } catch (err) {
+      loggerRef.error(`Failed to ensure exclusive access for ${route}: ${err.message}`);
+      respondJson(res, 502, { error: { message: "launcher_busy" } });
+      return true;
+    }
+    lastHitMap.set(target.container, nowFn());
+    const bodyBuffer = Buffer.from(rawBody, "utf8");
+    const headers = prepareForwardHeaders(req.headers || {}, bodyBuffer.length, target);
+    const path = `${forwardSuffix}${search || ""}`;
+    try {
+      await forwardRequest({
+        method: req.method || "POST",
+        path,
+        bodyBuffer,
+        headers,
+        target,
+        res,
+      });
+    } catch (err) {
+      loggerRef.error(`OpenAI proxy error (${route}): ${err.message}`);
+      respondJson(res, 502, { error: { message: "openai_proxy_failed" } });
+      return true;
+    }
+    return true;
+  }
+
+  return async function openAIHandler(req, res) {
+    if (!req.url) return false;
+    const { pathname, search } = new URL(req.url, "http://launcher.local");
+    if (req.method === "GET" && pathname === "/openai/v1/models") {
+      respondJson(res, 200, modelsPayload);
+      return true;
+    }
+    if (req.method === "POST" && pathname === "/openai/v1/chat/completions") {
+      return handleProxy(req, res, "/v1/chat/completions", search);
+    }
+    if (req.method === "POST" && pathname === "/openai/v1/images/generations") {
+      return handleProxy(req, res, "/v1/images/generations", search);
+    }
+    return false;
+  };
 }
 
 export function createAdminHandler({
@@ -336,6 +594,15 @@ const adminHandler = createAdminHandler({
   logger,
 });
 
+const openAIHandler = createOpenAIHandler({
+  routeMap: ROUTE_MAP,
+  modelToRoute: MODEL_TO_ROUTE,
+  metadata: MODEL_METADATA,
+  ensureExclusiveFn: ensureExclusive,
+  lastHitMap: lastHit,
+  logger,
+});
+
 function createServer() {
   proxy.removeAllListeners("error");
   proxy.on("error", (err, req, res) => {
@@ -350,6 +617,9 @@ function createServer() {
     const requestStart = Date.now();
     try {
       if (await adminHandler(req, res)) {
+        return;
+      }
+      if (await openAIHandler(req, res)) {
         return;
       }
       const picked = pickTarget(req.url);
