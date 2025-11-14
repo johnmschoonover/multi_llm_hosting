@@ -5,7 +5,8 @@ import time
 from typing import Optional
 
 import torch
-from diffusers import AutoPipelineForText2Image, DiffusionPipeline
+from diffusers import AutoPipelineForText2Image, DiffusionPipeline, StableDiffusion3Pipeline
+from huggingface_hub.errors import GatedRepoError
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -28,10 +29,11 @@ app.add_middleware(
 )
 
 PIPELINE: Optional[DiffusionPipeline] = None
+PIPELINE_DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def load_pipeline() -> DiffusionPipeline:
-    global PIPELINE
+    global PIPELINE, PIPELINE_DEVICE
     if PIPELINE is not None:
         return PIPELINE
 
@@ -47,21 +49,51 @@ def load_pipeline() -> DiffusionPipeline:
     if HF_TOKEN:
         load_kwargs["token"] = HF_TOKEN
 
-    PIPELINE = AutoPipelineForText2Image.from_pretrained(
-        MODEL_ID,
-        **load_kwargs
-    )
+    # Use StableDiffusion3Pipeline for SD3.x models
+    if MODEL_ID.startswith("stabilityai/stable-diffusion-3"):
+        pipeline_cls = StableDiffusion3Pipeline
+        load_kwargs.setdefault("variant", "fp16")
+    else:
+        pipeline_cls = AutoPipelineForText2Image
+
+    try:
+        pipe = pipeline_cls.from_pretrained(
+            MODEL_ID,
+            **load_kwargs,
+        )
+    except GatedRepoError as exc:
+        raise RuntimeError(
+            "Unable to load gated Hugging Face repo for Stable Diffusion: accept access and set HF_TOKEN."
+        ) from exc
+    except OSError as exc:
+        raise RuntimeError(f"Failed to load diffusion model '{MODEL_ID}': {exc}") from exc
+
+    # Disable the safety checker when requested
     if not ENABLE_SAFETY_CHECKER:
-        if hasattr(PIPELINE, "safety_checker"):
-            PIPELINE.safety_checker = None
-        if hasattr(PIPELINE, "requires_safety_checker"):
-            PIPELINE.requires_safety_checker = False
-    PIPELINE = PIPELINE.to("cuda")
-    PIPELINE.set_progress_bar_config(disable=True)
-    if ENABLE_TILING and hasattr(PIPELINE, "enable_vae_tiling"):
-        PIPELINE.enable_vae_tiling()
-    if ENABLE_ATTENTION_SLICING and hasattr(PIPELINE, "enable_attention_slicing"):
-        PIPELINE.enable_attention_slicing()
+        if hasattr(pipe, "safety_checker"):
+            pipe.safety_checker = None
+        if hasattr(pipe, "requires_safety_checker"):
+            pipe.requires_safety_checker = False
+
+    # IMPORTANT: use CPU offload instead of placing everything on CUDA
+    if torch.cuda.is_available():
+        pipe.enable_model_cpu_offload()
+    else:
+        pipe = pipe.to("cpu")
+
+    pipe.set_progress_bar_config(disable=True)
+
+    if ENABLE_TILING and hasattr(pipe, "enable_vae_tiling"):
+        pipe.enable_vae_tiling()
+
+    if ENABLE_ATTENTION_SLICING and hasattr(pipe, "enable_attention_slicing"):
+        pipe.enable_attention_slicing()
+
+    if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_slicing"):
+        pipe.vae.enable_slicing()
+
+    PIPELINE = pipe
+    PIPELINE_DEVICE = getattr(pipe, "_execution_device", pipe.device)
     return PIPELINE
 
 
@@ -110,9 +142,10 @@ class GenerateResponse(BaseModel):
 
 def _run_generation(req: GenerateRequest) -> GenerateResponse:
     pipe = load_pipeline()
+    exec_device = getattr(pipe, "_execution_device", PIPELINE_DEVICE)
     generator = None
     if req.seed is not None:
-        generator = torch.Generator(device="cuda").manual_seed(req.seed)
+        generator = torch.Generator(device=exec_device).manual_seed(req.seed)
 
     started = time.perf_counter()
     try:
