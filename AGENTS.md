@@ -9,6 +9,7 @@
 - If a `PLANS.md` migration plan exists, either keep it up to date as work progresses or retire it entirely once you have confirmed the plan is fully implemented.
 - Secrets belong in `.env` (ignored). Do not add sensitive data to tracked files.
 - Whenever env vars are added/removed/repurposed in compose or code, update `.env.example` in the same change so newcomers know which keys to set (e.g., `HF_TOKEN`).
+- After any change to `docker-compose.yml`, run `docker compose config` (or `docker compose up`) locally to ensure the YAML parses cleanly before committing; malformed compose files block every service.
 
 ## Build, Test, and Development Commands
 - `docker compose --profile launcher up -d` boots the proxy plus always-on helpers (Open WebUI + SearXNG) for quick iterations.

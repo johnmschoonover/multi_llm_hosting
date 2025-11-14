@@ -38,8 +38,8 @@ This README describes how to run the vLLM multi-service stack inside WSL2 on a W
    PREWARM_ROUTES=
    ```
      `.env` is already ignored; keep your API key here and rotate it periodically.
-   `HF_TOKEN` is optional but required for gated checkpoints such as Meta Llama 3.1; reuse it for both
-   `HF_TOKEN` and `HUGGING_FACE_HUB_TOKEN` via the shared env block in `docker-compose.yml`.
+  `HF_TOKEN` is optional but required for gated checkpoints such as Meta Llama 3.1 and `stabilityai/stable-diffusion-3.5-medium`; reuse it for both
+  `HF_TOKEN` and `HUGGING_FACE_HUB_TOKEN` via the shared env block in `docker-compose.yml`.
    Create the token from https://huggingface.co/settings/tokens (scope: **Read**) and accept the
    specific model licenses (e.g., Meta Llama 3.1) under each repo’s “Access” tab. Paste the token into
    `.env` or run `huggingface-cli login --token $HF_TOKEN` before `docker compose up`.
@@ -88,6 +88,8 @@ docker compose --profile launcher --profile vision up -d
 ```
 
 Open WebUI and SearXNG are bundled into the `launcher` profile, so anytime you run a command with `--profile launcher` (including the ones above) those services will come up automatically—no extra `docker compose` invocation needed.
+
+> **Note:** `stabilityai/stable-diffusion-3.5-medium` is a gated Hugging Face repo. Request/accept access and export `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` before starting the vision profile; otherwise the container will crash at startup with a 403.
 
 > **Heads-up:** All vLLM model containers now set `restart: "no"` so they stay stopped after you `docker compose stop` them or restart the Docker engine; the launcher will spin them up on demand the next time traffic hits their route. The `launcher` and `open-webui` services themselves use `restart: unless-stopped`, so they automatically return after a daemon restart unless you explicitly stop them.
 
@@ -153,8 +155,8 @@ docker volume rm ${COMPOSE_PROJECT_NAME:-multi_llm_hosting}_open-webui-data
 Customize the diffusion checkpoint or runtime limits by exporting
 `VISION_MODEL_ID` (defaults to `stabilityai/stable-diffusion-3.5-medium`),
 `VISION_MODEL_REVISION`, `VISION_ENABLE_SAFETY_CHECKER`, `VISION_ENABLE_TILING`,
-`VISION_ENABLE_ATTENTION_SLICING`, or `VISION_MAX_EDGE` before running
-`docker compose` (all default to sensible values in the container if unset).
+`VISION_ENABLE_ATTENTION_SLICING`, or `VISION_MAX_EDGE`
+(default `1024`) before running `docker compose` (all default to sensible values in the container if unset).
 
 The launcher listens on `:8000` and expects requests like:
 
