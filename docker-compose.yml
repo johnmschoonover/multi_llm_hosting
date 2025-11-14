@@ -144,6 +144,18 @@ services:
       - open-webui-data:/app/backend/data
     depends_on: [launcher]
 
+  # --- Local SearXNG meta search engine ---
+  searxng:
+    container_name: searxng
+    image: searxng/searxng
+    restart: unless-stopped
+    environment:
+      BASE_URL: "http://searxng:8080/"
+    volumes:
+      - ./searxng:/etc/searxng
+    ports:
+      - "8080:8080"
+
   # --- Single front door on :8000 with path routing ---
   launcher:
     build: ./launcher

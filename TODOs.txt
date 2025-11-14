@@ -5,6 +5,7 @@
 - [ ] **.env**: add `VLLM_API_KEY=<hex>`, `COMPOSE_PROJECT_NAME=llm`.
 - [ ] **Profiles**: ensure `coder`, `chat`, `general`, `coderslow`, `agent`, `vision`, `launcher` profiles exist and run cleanly.
 - [ ] **WSL ext4 space** verified on D: (done). Ensure weights+cache use `/srv/llm/.cache` (ext4).
+- [ ] **Local web search**: finish wiring the `searxng_search` tool inside Open WebUI (or via a launcher proxy route) so it calls `http://searxng:8080/search` with mode-aware engines.
 
 ## Launcher (lazy start/stop proxy)
 - [ ] **Path rewrite** confirmed (`/chat|/coder|/general|/coderslow|/agent` → strip prefix → backend `/v1/...`).

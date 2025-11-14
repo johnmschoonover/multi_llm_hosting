@@ -111,6 +111,38 @@ docker compose --profile launcher --profile webui up -d
   3. Set **Base URL** to `http://launcher:8000/vision`, keep the endpoint at `/v1/images/generations`, and enter any placeholder API key if the UI insists (the launcher sets `MAP__vision__auth=passthrough`, so the key is ignored).
   4. Save, head to the **Images** tab, select the connector you just created, and generate an image to confirm the round-trip works.
 
+### Local SearXNG search
+
+The Compose stack also ships a `searxng` service on port `8080`, mounting `./searxng/settings.yml` so you can tune engine priorities. The bundled config keeps only privacy-friendly engines we care about and sets sane defaults:
+
+| Mode      | Engines                                                         |
+|-----------|-----------------------------------------------------------------|
+| General   | `duckduckgo`, `brave`, `wikipedia`, `wikidata`                  |
+| Code      | `github`, `stackoverflow`, plus `duckduckgo` for broader web    |
+| Research  | `arxiv`, `semantic scholar`, plus `duckduckgo`                  |
+
+To expose this inside Open WebUI, create a tool named `searxng_search` (via the UI or by dropping a plugin under `open-webui-data`). Suggested schema:
+
+- `query: str` — search string.
+- `mode: Optional[str]` — `"general"`, `"code"`, `"research"`, or `"auto"` (when `"auto"`, inspect the Open WebUI model name: treat names containing `code`, `coder`, `deepseek-coder`, `qwen-coder` as code; treat `research`, `r1`, `deepseek-r1` as research; otherwise default to general).
+- `model: Optional[str]` — model identifier if Open WebUI forwards it.
+
+Implementation sketch:
+
+```pseudo
+if mode == "code": engines = "github,stackoverflow,duckduckgo"
+elif mode == "research": engines = "arxiv,semantic scholar,duckduckgo"
+else: engines = "duckduckgo,brave,wikipedia"
+resp = GET http://searxng:8080/search?q=...&format=json&engines=...&language=en
+return {
+  "mode": resolved_mode,
+  "engines_used": engines.split(","),
+  "results": top 5 items with title/url/snippet
+}
+```
+
+If you’d rather centralize access through the launcher, add a `POST /tools/searxng_search` endpoint in `launcher/server.js` that wraps the same logic and point the Open WebUI tool at `http://launcher:8000/tools/searxng_search`.
+
 User accounts, workspace preferences, and chat history are stored inside the `open-webui-data`
 named volume. Keep it mounted to preserve UI state across rebuilds, or remove it to factory reset:
 
