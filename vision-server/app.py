@@ -5,12 +5,12 @@ import time
 from typing import Optional
 
 import torch
-from diffusers import StableDiffusionPipeline
+from diffusers import AutoPipelineForText2Image, DiffusionPipeline
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-MODEL_ID = os.environ.get("MODEL_ID", "runwayml/stable-diffusion-v1-5")
+MODEL_ID = os.environ.get("MODEL_ID", "stabilityai/stable-diffusion-3.5-medium")
 MODEL_REVISION = os.environ.get("MODEL_REVISION")
 ENABLE_SAFETY_CHECKER = os.environ.get("ENABLE_SAFETY_CHECKER", "0") == "1"
 ENABLE_TILING = os.environ.get("ENABLE_TILING", "1") == "1"
@@ -27,10 +27,10 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-PIPELINE: Optional[StableDiffusionPipeline] = None
+PIPELINE: Optional[DiffusionPipeline] = None
 
 
-def load_pipeline() -> StableDiffusionPipeline:
+def load_pipeline() -> DiffusionPipeline:
     global PIPELINE
     if PIPELINE is not None:
         return PIPELINE
@@ -47,18 +47,20 @@ def load_pipeline() -> StableDiffusionPipeline:
     if HF_TOKEN:
         load_kwargs["token"] = HF_TOKEN
 
-    PIPELINE = StableDiffusionPipeline.from_pretrained(
+    PIPELINE = AutoPipelineForText2Image.from_pretrained(
         MODEL_ID,
         **load_kwargs
     )
     if not ENABLE_SAFETY_CHECKER:
-        PIPELINE.safety_checker = None
-        PIPELINE.requires_safety_checker = False
+        if hasattr(PIPELINE, "safety_checker"):
+            PIPELINE.safety_checker = None
+        if hasattr(PIPELINE, "requires_safety_checker"):
+            PIPELINE.requires_safety_checker = False
     PIPELINE = PIPELINE.to("cuda")
     PIPELINE.set_progress_bar_config(disable=True)
-    if ENABLE_TILING:
+    if ENABLE_TILING and hasattr(PIPELINE, "enable_vae_tiling"):
         PIPELINE.enable_vae_tiling()
-    if ENABLE_ATTENTION_SLICING:
+    if ENABLE_ATTENTION_SLICING and hasattr(PIPELINE, "enable_attention_slicing"):
         PIPELINE.enable_attention_slicing()
     return PIPELINE
 

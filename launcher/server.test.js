@@ -19,12 +19,12 @@ test("buildRouteMap collects prefixed env vars", () => {
     MAP__coder__container: "coder3b",
     MAP__vision__health: "/healthz",
     MAP__vision__auth: "passthrough",
-    MAP__vision__models: "vision-diffusion,sd15",
+    MAP__vision__models: "vision-diffusion,sd35m,sd15",
   };
   const map = buildRouteMap(env);
   assert.deepEqual(map.chat, { container: "sitechat", port: "8002" });
   assert.deepEqual(map.coder, { container: "coder3b" });
-  assert.deepEqual(map.vision, { health: "/healthz", auth: "passthrough", models: ["vision-diffusion", "sd15"] });
+  assert.deepEqual(map.vision, { health: "/healthz", auth: "passthrough", models: ["vision-diffusion", "sd35m", "sd15"] });
 });
 
 test("pickTarget returns matching route metadata", () => {

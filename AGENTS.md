@@ -6,12 +6,13 @@
 - `vision-server/` packages the diffusion FastAPI container that powers the `/vision` route. Keep it lightweight and GPU-first.
 - The optional `open-webui` compose service exposes a chat-centric UI against the `/chat` launcher route; keep it stateless besides its bound data volume.
 - `README.md` documents host-level setup, while `TODOs.txt` tracks pending infra improvements; update both when behavior changes.
+- If a `PLANS.md` migration plan exists, either keep it up to date as work progresses or retire it entirely once you have confirmed the plan is fully implemented.
 - Secrets belong in `.env` (ignored). Do not add sensitive data to tracked files.
 - Whenever env vars are added/removed/repurposed in compose or code, update `.env.example` in the same change so newcomers know which keys to set (e.g., `HF_TOKEN`).
 
 ## Build, Test, and Development Commands
-- `docker compose --profile launcher up -d launcher` boots only the proxy for quick iterations.
-- `docker compose --profile launcher --profile coder up -d` (or `chat`, `general`, `coderslow`, `agent`, `vision`, `webui`) launches the proxy plus a specific profile.
+- `docker compose --profile launcher up -d` boots the proxy plus always-on helpers (Open WebUI + SearXNG) for quick iterations.
+- `docker compose --profile launcher --profile coder up -d` (or `chat`, `general`, `coderslow`, `agent`, `vision`) launches the proxy/helpers plus a specific model profile.
 - `docker compose logs -f launcher` tails proxy logs; essential for diagnosing lazy-start events.
 - `docker compose stop <service>` frees GPU VRAM when switching workloads.
 - `cd launcher && npm test` runs the lightweight unit tests for route parsing/mutex logic.

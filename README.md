@@ -1,7 +1,7 @@
 # multi_llm_hosting
 
 Self-hosted playground for multiple vLLM backends plus a GPU diffusion server behind a single lazy-launching proxy, now with an optional Open WebUI front-end.
-`docker-compose.yml` defines five intent-based language models (`coder-fast`, `chat-general`, `general-reasoner`, `coder-slow`, `agent-tools`), a Stable Diffusion profile (`vision-diffusion`), and a `launcher`
+`docker-compose.yml` defines five intent-based language models (`coder-fast`, `chat-general`, `general-reasoner`, `coder-slow`, `agent-tools`), a Stable Diffusion 3.5 Medium profile (`vision-diffusion`), and a `launcher`
 container that routes `/coder`, `/chat`, `/general`, `/coderslow`, `/agent`, and `/vision` traffic to the right backend, starting/stopping
 containers on demand to conserve GPU memory.
 
@@ -15,7 +15,7 @@ This README describes how to run the vLLM multi-service stack inside WSL2 on a W
 | ---- | ----------- |
 | `docker-compose.yml` | All service definitions, profiles, and shared env blocks. |
 | `launcher/` | Tiny Node.js proxy that autostarts containers and trims idle ones. |
-| `vision-server/` | FastAPI wrapper around a Stable Diffusion pipeline for the `/vision` route. |
+| `vision-server/` | FastAPI wrapper around a Stable Diffusion 3.5 Medium pipeline for the `/vision` route. |
 | *(Compose service)* `open-webui` | Optional Open WebUI container that points at the `/chat` route on the launcher. |
 | Docker volume `open-webui-data` | Persists Open WebUI accounts, chat history, and workspace settings. |
 | `.env` | Local-only secrets (`VLLM_API_KEY`, `COMPOSE_PROJECT_NAME`, etc.); ignored by Git. |
@@ -59,10 +59,10 @@ This README describes how to run the vLLM multi-service stack inside WSL2 on a W
 
 ## Running services
 
-Bring up the launcher alone (no models warmed):
+Bring up the launcher core (launcher proxy + Open WebUI + SearXNG, still with no LLMs warmed):
 
 ```bash
-docker compose --profile launcher up -d launcher
+docker compose --profile launcher up -d
 ```
 
 Start a specific model profile (launcher + backend):
@@ -83,12 +83,11 @@ docker compose --profile launcher --profile coderslow up -d
 # Tool-capable agent (Qwen2.5 7B Instruct w/ tool calling, 8-bit)
 docker compose --profile launcher --profile agent up -d
 
-# Vision diffusion service (Stable Diffusion v1.5 FastAPI wrapper)
+# Vision diffusion service (Stable Diffusion 3.5 Medium FastAPI wrapper)
 docker compose --profile launcher --profile vision up -d
-
-# Open WebUI front-end (chat via `/chat` route)
-docker compose --profile launcher --profile webui up -d
 ```
+
+Open WebUI and SearXNG are bundled into the `launcher` profile, so anytime you run a command with `--profile launcher` (including the ones above) those services will come up automatically—no extra `docker compose` invocation needed.
 
 > **Heads-up:** All vLLM model containers now set `restart: "no"` so they stay stopped after you `docker compose stop` them or restart the Docker engine; the launcher will spin them up on demand the next time traffic hits their route. The `launcher` and `open-webui` services themselves use `restart: unless-stopped`, so they automatically return after a daemon restart unless you explicitly stop them.
 
@@ -151,10 +150,11 @@ named volume. Keep it mounted to preserve UI state across rebuilds, or remove it
 docker volume rm ${COMPOSE_PROJECT_NAME:-multi_llm_hosting}_open-webui-data
 ```
 
-Customize the diffusion checkpoint or runtime limits by exporting `VISION_MODEL_ID`,
-`VISION_MODEL_REVISION`, `VISION_ENABLE_SAFETY_CHECKER`, or `VISION_MAX_EDGE` before
-running `docker compose` (all default to sensible values in the container if
-unset).
+Customize the diffusion checkpoint or runtime limits by exporting
+`VISION_MODEL_ID` (defaults to `stabilityai/stable-diffusion-3.5-medium`),
+`VISION_MODEL_REVISION`, `VISION_ENABLE_SAFETY_CHECKER`, `VISION_ENABLE_TILING`,
+`VISION_ENABLE_ATTENTION_SLICING`, or `VISION_MAX_EDGE` before running
+`docker compose` (all default to sensible values in the container if unset).
 
 The launcher listens on `:8000` and expects requests like:
 
